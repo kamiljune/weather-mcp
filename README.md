@@ -6,6 +6,12 @@
 [![Tests](https://img.shields.io/badge/tests-2%2C427%20passing-brightgreen)](./docs/testing/TEST_SUITE_README.md)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
+> **This is a fork.** Upstream is [weather-mcp/weather-mcp](https://github.com/weather-mcp/weather-mcp)
+> by Dan Gahagan (MIT) — all the weather tooling below is his work. This fork adds a
+> [Streamable HTTP transport](./docs/DEPLOY_HTTP.md) for running the server as a hosted
+> service that Claude and ChatGPT connectors can reach at a URL. See [FORK.md](./FORK.md)
+> for what diverges and how this tracks upstream. Not published to npm — install from source.
+
 **Give your AI assistant real weather data — 17 tools, zero API keys, zero signup, zero cost.**
 
 Weather MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server that connects AI assistants (Claude, Cursor, Cline, Zed, and any other MCP client) to live weather data: forecasts, current conditions, alerts, air quality, marine conditions, lightning, radar, rivers, wildfires, and 85+ years of historical weather. It's built entirely on free public data sources — NOAA, Open-Meteo, USGS, NIFC, NASA FIRMS, RainViewer, and Blitzortung.org — so there is nothing to sign up for and no key to paste in. (A few optional keys unlock extras — see [Optional API keys](#optional-api-keys) — but no tool ever requires one.)
@@ -388,6 +394,7 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 - **[Error Handling](./docs/ERROR_HANDLING.md)** — how failures are reported
 - **[Testing Guide](./docs/testing/TESTING_GUIDE.md)** — manual testing procedures
 - **[Changelog](./CHANGELOG.md)** — version history
+- **[About this fork](./FORK.md)** — what diverges from upstream and how this tracks it
 - **[Full documentation index](./docs/README.md)**
 
 ## Contributing

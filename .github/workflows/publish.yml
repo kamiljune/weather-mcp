@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   publish-npm:
+    # Forks must never publish to upstream's npm package or registry id.
+    if: github.repository == 'weather-mcp/weather-mcp'
     runs-on: ubuntu-latest
     permissions:
       contents: read

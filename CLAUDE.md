@@ -12,6 +12,21 @@ This document provides context and guidelines for AI assistants (Claude, etc.) w
 - **MCP SDK:** `@modelcontextprotocol/sdk` (see `package.json` for the pinned range)
 - **Data model:** zero-cost, zero-key by default — every tool works without any API key; a few optional keys extend coverage (see [Configuration](#configuration))
 
+## Fork status
+
+This repository is a fork of [weather-mcp/weather-mcp](https://github.com/weather-mcp/weather-mcp)
+(Dan Gahagan, MIT) that **tracks upstream and stays mergeable with it**. The fork
+adds the Streamable HTTP transport and nothing else. Two consequences for any
+change made here:
+
+- **Prefer new files to edits of upstream files.** Every line changed in a file
+  upstream also touches is merge work later.
+- **Fork changelog entries stay in `CHANGELOG.md`'s `[Unreleased]`**, where a
+  pull request upstream would put them — not in a separate fork changelog.
+
+See [FORK.md](./FORK.md) for the diverging-file list, the merge procedure, and
+why the npm/registry identifiers still point at upstream.
+
 ## Architecture
 
 ### Core Components
