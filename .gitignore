@@ -20,6 +20,12 @@ locations.json
 .weather-mcp/
 saved-forecasts/
 
+# HTTP deployment state, created in place by docker-compose.
+# Leading slashes are load-bearing: a bare "config/" would also ignore
+# src/config/, silently dropping source files from the repository.
+/config/
+/data/
+
 # IDE
 .vscode/
 .idea/

@@ -48,6 +48,10 @@ cp keys.example.json config/keys.json
 $EDITOR config/keys.json
 ```
 
+`/config/` and `/data/` are gitignored, so deploying from a clone of this
+repository will not commit your keys or anyone's saved locations. Verify with
+`git status` after your first `docker compose up` — it should report nothing.
+
 ```json
 {
   "tenants": [
