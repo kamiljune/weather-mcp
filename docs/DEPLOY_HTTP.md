@@ -214,6 +214,47 @@ weather.laputa.one {
 }
 ```
 
+### Behind Cloudflare
+
+Cloudflare in front of the origin works, but two of its defaults will break or
+weaken this deployment. Both bite only when the record is **proxied** (orange
+cloud); a DNS-only (grey cloud) record behaves like any other host.
+
+**1. Bot protection blocks the connectors.** Claude's and ChatGPT's connectors
+are server-side HTTP clients, not browsers: no cookies, no JavaScript, and a
+non-browser user agent. Bot Fight Mode, "Block AI bots/scrapers", and most
+managed WAF bot rules will challenge or drop them, and the client reports it as
+a plain connection failure with nothing in the origin logs — because the request
+never reached the origin. If the endpoint answers over loopback but not over the
+domain, check the Cloudflare **Security → Events** log before touching anything
+on the server.
+
+Fix by exempting the endpoint. Security → WAF → Custom rules, a **Skip** rule:
+
+```
+(http.host eq "weather.laputa.one" and starts_with(http.request.uri.path, "/mcp"))
+```
+
+skipping Bot Fight Mode / Super Bot Fight Mode, managed rules, and rate limiting.
+Also switch off **Block AI bots** for this hostname if it is enabled — the tools
+are being called *by* an AI assistant on purpose.
+
+**2. Cloudflare logs the API key.** The key is a path segment, so it lands in
+Cloudflare's request analytics, Logpush, and any rule keyed on the URL — a log
+surface outside your server that `access_log off` does not cover. Nothing here is
+broken by that, but weigh it:
+
+- prefer the `Authorization: Bearer` form wherever the client supports it
+  (Claude Code does; the web connector UIs generally do not);
+- never enable a Cache Rule that caches by full URL on this path;
+- if Logpush is on, exclude this hostname or the `ClientRequestURI` field.
+
+Two smaller notes: the free plan drops a request whose origin takes longer than
+**100 seconds** (error 524) — comfortably above a normal call, but a cold
+`get_weather_summary` fanning out to many upstreams is the one that could reach
+it; and keep `WEATHER_HTTP_JSON_RESPONSE=true` (the default), since a single JSON
+body passes through Cloudflare without the buffering questions SSE raises.
+
 ### After the domain is live
 
 Set the Host allowlist so the server rejects requests arriving under any other
@@ -222,6 +263,9 @@ name, then restart:
 ```
 WEATHER_HTTP_ALLOWED_HOSTS=weather.laputa.one
 ```
+
+Cloudflare preserves the original `Host` header when proxying, so this works
+unchanged behind an orange-cloud record.
 
 ---
 
