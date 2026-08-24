@@ -127,13 +127,13 @@ TEST_COUNT_FMT=$(node -p "(${TEST_COUNT}).toLocaleString('en-US')")
 TEST_COUNT_BADGE=${TEST_COUNT_FMT//,/%2C}   # shields.io URL-encodes the comma
 echo "   ${TEST_COUNT_FMT} tests passing"
 
-# --- 5. Tool count (from the TOOL_DEFINITIONS registry in src/index.ts) --------
-TOOL_COUNT=$(grep -cE "name: '[a-z_]+' as const" src/index.ts)
+# --- 5. Tool count (from the TOOL_DEFINITIONS registry in src/server/weatherServer.ts) --------
+TOOL_COUNT=$(grep -cE "name: '[a-z_]+' as const" src/server/weatherServer.ts)
 if [ "$TOOL_COUNT" -eq 0 ]; then
-  echo "❌ Could not count tools in src/index.ts — did the TOOL_DEFINITIONS format change?"
+  echo "❌ Could not count tools in src/server/weatherServer.ts — did the TOOL_DEFINITIONS format change?"
   exit 1
 fi
-echo "🔧 ${TOOL_COUNT} MCP tools defined in src/index.ts"
+echo "🔧 ${TOOL_COUNT} MCP tools defined in src/server/weatherServer.ts"
 
 # --- 6. Doc reference updates --------------------------------------------------
 SUMMARY_TEXT=${SUMMARY:-"See CHANGELOG.md"}

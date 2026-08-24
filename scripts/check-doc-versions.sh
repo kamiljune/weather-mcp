@@ -130,11 +130,11 @@ else
   echo "⚠️  Could not determine test count (npm test failed?)"
 fi
 
-# Check tool count consistency (source of truth: TOOL_DEFINITIONS in src/index.ts)
+# Check tool count consistency (source of truth: TOOL_DEFINITIONS in src/server/weatherServer.ts)
 echo ""
 echo "🔧 Checking tool count consistency..."
-TOOL_COUNT=$(grep -cE "name: '[a-z_]+' as const" src/index.ts)
-echo "📊 Tools defined in src/index.ts: ${GREEN}${TOOL_COUNT}${NC}"
+TOOL_COUNT=$(grep -cE "name: '[a-z_]+' as const" src/server/weatherServer.ts)
+echo "📊 Tools defined in src/server/weatherServer.ts: ${GREEN}${TOOL_COUNT}${NC}"
 
 check_tool_count() {
   local file=$1

@@ -3,7 +3,7 @@
 [![npm version](https://badge.fury.io/js/@dangahagan%2Fweather-mcp.svg)](https://www.npmjs.com/package/@dangahagan/weather-mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.dgahagan/weather-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-2%2C332%20passing-brightgreen)](./docs/testing/TEST_SUITE_README.md)
+[![Tests](https://img.shields.io/badge/tests-2%2C386%20passing-brightgreen)](./docs/testing/TEST_SUITE_README.md)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
 **Give your AI assistant real weather data — 17 tools, zero API keys, zero signup, zero cost.**
@@ -50,7 +50,7 @@ Choose this one if you want:
 
 - **Genuinely free** — every data source is a free public API. No trial that expires, no credit card, no rate-limited "free tier" bait.
 - **No API keys** — install to first forecast in under a minute. Nothing to configure, nothing to leak into a repo. ([Three optional keys](#optional-api-keys) add extras if you want them; the default configuration needs none.)
-- **Fully open source** — MIT licensed, readable TypeScript, 2,332 tests. Audit it, fork it, fix it.
+- **Fully open source** — MIT licensed, readable TypeScript, 2,386 tests. Audit it, fork it, fix it.
 - **Privacy-respecting** — your queries go directly from your machine to public weather APIs. No middleman server, no telemetry.
 - **Breadth** — 17 tools covering weather, safety hazards (lightning, floods, wildfires), marine conditions, air quality, and historical data back to 1940. Most weather MCPs stop at forecasts.
 
@@ -171,6 +171,26 @@ Requires Node.js 18+. No API keys, tokens, or accounts needed — see [Optional 
 ### Works with
 
 Claude Desktop, Claude Code, Cline, Cursor, Zed, VS Code (GitHub Copilot), LM Studio, Postman — any client that speaks MCP. Per-client setup instructions: **[docs/CLIENT_SETUP.md](./docs/CLIENT_SETUP.md)**.
+
+### Remote HTTP server
+
+Everything above runs the server locally over stdio. It can also run as a hosted
+service that Claude custom connectors and ChatGPT connectors reach at a URL of
+your own, over the MCP Streamable HTTP transport:
+
+```bash
+cp .env.http.example .env      # set WEATHER_API_KEYS
+docker compose up -d --build
+```
+
+Clients then connect to `https://your.domain/mcp/<api-key>` — the key rides in
+the URL path, because that is the one form every remote-MCP client UI can
+express; `Authorization: Bearer <key>` is accepted wherever the client supports
+headers. Each key gets its own saved-location namespace, its own rate-limit
+budget, and can be revoked independently.
+
+Full walkthrough — key generation, Docker, 1Panel/nginx/Caddy reverse proxy, TLS,
+and connecting each client: **[docs/DEPLOY_HTTP.md](./docs/DEPLOY_HTTP.md)**.
 
 ### Upgrading
 
@@ -331,7 +351,7 @@ Being honest about what free public data can and can't do:
 ```bash
 npm run build          # Compile TypeScript
 npm run dev            # Run in development mode
-npm test               # Run all 2,332 tests
+npm test               # Run all 2,386 tests
 npm run test:coverage  # Coverage report
 npm run audit          # Dependency vulnerability scan
 ```
@@ -358,6 +378,7 @@ To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 - **[Examples](./examples/)** — realistic sessions in cities around the world: prompt → assistant answer → verbatim server output
 - **[Tool Reference](./docs/TOOLS.md)** — all 17 tools: parameters, examples, sample output
 - **[Client Setup](./docs/CLIENT_SETUP.md)** — step-by-step for 8 MCP clients
+- **[Remote HTTP Deployment](./docs/DEPLOY_HTTP.md)** — run it as a hosted service for Claude and ChatGPT connectors
 - **[Error Handling](./docs/ERROR_HANDLING.md)** — how failures are reported
 - **[Testing Guide](./docs/testing/TESTING_GUIDE.md)** — manual testing procedures
 - **[Changelog](./CHANGELOG.md)** — version history

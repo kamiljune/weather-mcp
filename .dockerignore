@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.github
+.devdocs
+tests
+docs
+examples
+scripts
+coverage
+*.log
+.env
+.env.*
+!.env.example

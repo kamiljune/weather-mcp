@@ -49,6 +49,17 @@ function escapeMarkdown(text: string): string {
 }
 
 /**
+ * Render the trailing storage-location line.
+ *
+ * Stores that withhold their path (the HTTP transport's per-key stores) render
+ * nothing, so the line simply disappears rather than leaking a server directory.
+ */
+function formatStorageLine(locationStore: LocationStore): string {
+  const displayPath = locationStore.getDisplayPath();
+  return displayPath ? `*Storage location: ${displayPath}*\n` : '';
+}
+
+/**
  * Save a location for future use
  */
 export async function handleSaveLocation(
@@ -314,7 +325,7 @@ export async function handleSaveLocation(
     output += `The activities you've tagged will help the AI provide relevant weather information.\n\n`;
   }
 
-  output += `*Storage location: ${locationStore.getStorePath()}*\n`;
+  output += formatStorageLine(locationStore);
 
   return {
     content: [
@@ -347,7 +358,7 @@ export async function handleListSavedLocations(
             `save_location(alias="home", location_query="Seattle, WA")\n` +
             `save_location(alias="cabin", location_query="Lake Tahoe, CA")\n` +
             `\`\`\`\n\n` +
-            `*Storage location: ${locationStore.getStorePath()}*\n`
+            formatStorageLine(locationStore)
         }
       ]
     };
@@ -407,7 +418,7 @@ export async function handleListSavedLocations(
     output += `get_forecast(location_name="${alias}")\n`;
   }
   output += `\`\`\`\n\n`;
-  output += `*Storage location: ${locationStore.getStorePath()}*\n`;
+  output += formatStorageLine(locationStore);
 
   return {
     content: [

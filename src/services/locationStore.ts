@@ -10,12 +10,27 @@ import type { SavedLocation, SavedLocationsStore } from '../types/savedLocations
 import { logger } from '../utils/logger.js';
 import { validateLatitude, validateLongitude } from '../utils/validation.js';
 
+export interface LocationStoreOptions {
+  /**
+   * Include the on-disk store path in rendered output. Defaults to true.
+   * The HTTP transport turns it off — one process serves many callers, and the
+   * path names a server directory.
+   */
+  disclosePath?: boolean;
+}
+
 export class LocationStore {
   private readonly storePath: string;
+  private readonly disclosePath: boolean;
   private readonly storeDir: string;
   private cache: SavedLocationsStore | null = null;
 
-  constructor(customPath?: string) {
+  constructor(customPath?: string, options: LocationStoreOptions = {}) {
+    // Default true so the stdio transport's output is unchanged: on a personal
+    // machine the path is useful, on a shared HTTP service it is a server detail
+    // the caller has no business seeing.
+    this.disclosePath = options.disclosePath ?? true;
+
     if (customPath) {
       this.storePath = customPath;
       this.storeDir = join(customPath, '..');
@@ -217,6 +232,15 @@ export class LocationStore {
    */
   getStorePath(): string {
     return this.storePath;
+  }
+
+  /**
+   * The store path when it may be shown to the caller, otherwise null.
+   *
+   * @returns The path, or null when this store was created with disclosePath: false.
+   */
+  getDisplayPath(): string | null {
+    return this.disclosePath ? this.storePath : null;
   }
 
   /**

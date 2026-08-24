@@ -15,6 +15,7 @@ Weather MCP Server.
 - **[../README.md](../README.md)** - Main project README with installation and usage instructions
 - **[../examples/](../examples/README.md)** - Realistic sessions: prompt → assistant answer → verbatim server output (regenerable via `npm run examples`)
 - **[CLIENT_SETUP.md](./CLIENT_SETUP.md)** - Setup guides for 8 different MCP clients
+- **[DEPLOY_HTTP.md](./DEPLOY_HTTP.md)** - Run the server as a hosted Streamable HTTP service for Claude and ChatGPT connectors
 
 ### 📁 Tool Reference
 - **[TOOLS.md](./TOOLS.md)** - Complete MCP tool reference: every tool, its parameters, and its output
@@ -54,6 +55,7 @@ extend coverage beyond their keyless path:
 ### For Users
 - [Installation](../README.md#installation)
 - [Setup Guide](./CLIENT_SETUP.md)
+- [Remote HTTP Deployment](./DEPLOY_HTTP.md)
 - [Tool Reference](./TOOLS.md)
 - [Error Handling](./ERROR_HANDLING.md)
 

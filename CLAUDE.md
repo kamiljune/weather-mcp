@@ -18,7 +18,17 @@ This document provides context and guidelines for AI assistants (Claude, etc.) w
 
 ```
 src/
-├── index.ts                 # MCP server entry point, TOOL_DEFINITIONS registry, dispatch
+├── index.ts                 # stdio entry point (npx / local MCP clients)
+├── server/
+│   ├── weatherServer.ts     # createWeatherServer() factory: TOOL_DEFINITIONS registry + dispatch,
+│   │                        #   shared upstream service singletons, injected LocationStore
+│   └── chatgptCompat.ts     # opt-in ChatGPT deep-research search/fetch tools (pure)
+├── http/                    # Streamable HTTP transport (hosted deployments)
+│   ├── index.ts             # HTTP entry point (npm run start:http)
+│   ├── httpServer.ts        # routing, auth, stateless transport per request
+│   ├── apiKeys.ts           # API key registry — hash-only, never logs key material
+│   ├── tenants.ts           # per-key LocationStore namespaces
+│   └── rateLimit.ts         # per-key token bucket
 ├── handlers/                # One handler per MCP tool (saved locations share one file)
 │   ├── forecastHandler.ts           # get_forecast (+ compare_models, ensemble_spread, normals, astronomy)
 │   ├── currentConditionsHandler.ts  # get_current_conditions (NOAA / Open-Meteo / METAR; fire weather, thermal stress)
@@ -70,6 +80,7 @@ src/
 │   └── version.ts
 ├── config/
 │   ├── cache.ts             # Cache TTLs + CACHE_*/API_TIMEOUT_MS/LOG_LEVEL parsing
+│   ├── http.ts              # WEATHER_HTTP_*/WEATHER_API_KEYS parsing (HTTP transport only)
 │   ├── units.ts             # WEATHER_UNITS and per-unit overrides
 │   ├── tools.ts             # ENABLED_TOOLS presets (basic/standard/full) and tool names
 │   ├── defaultLocation.ts   # WEATHER_DEFAULT_LOCATION
@@ -87,7 +98,8 @@ src/
 4. **Caching Strategy:** LRU cache with TTL based on data volatility (see `src/config/cache.ts`)
 5. **Error Hierarchy:** Custom error classes for different failure scenarios
 6. **Three-layer split for computed features:** service fetches → pure zero-I/O util computes → handler renders. The pure module owns constants; the service imports them from the util, never the reverse (e.g. `COMPARISON_MODELS`, `ENSEMBLE_MODEL`)
-7. **Route by country, not by bounding box, for jurisdictional data** (alerts, wildfire): `NominatimService.reverseCountry` resolves the country once; saved/geocoded locations carry `country_code` through `ResolvedLocation` and skip the lookup
+7. **Transport-agnostic server factory:** `createWeatherServer({ locationStore })` builds the MCP server; entry points connect it to a transport. Upstream services are module singletons (stateless apart from their caches) and are shared; anything **per-caller** is injected — today that is only `LocationStore`. Adding per-caller state means adding it to `WeatherServerOptions`, never a new module singleton
+8. **Route by country, not by bounding box, for jurisdictional data** (alerts, wildfire): `NominatimService.reverseCountry` resolves the country once; saved/geocoded locations carry `country_code` through `ResolvedLocation` and skip the lookup
 
 ## Key Features (17 MCP Tools)
 
@@ -125,7 +137,7 @@ Full per-tool parameter reference: `docs/TOOLS.md`.
 2. **Validation:** Add validators to `src/utils/validation.ts`
 3. **Handler:** Create or extend a handler in `src/handlers/` following existing patterns
 4. **Service (if needed):** Add API methods to an existing service or create a new one in `src/services/`
-5. **Tool Registration:** Register in `src/index.ts` (`TOOL_DEFINITIONS` and the `CallToolRequestSchema` dispatch)
+5. **Tool Registration:** Register in `src/server/weatherServer.ts` (`TOOL_DEFINITIONS` and the `CallToolRequestSchema` dispatch)
 6. **Tests:** Write comprehensive tests (see Testing section below)
 7. **Documentation:** `CHANGELOG.md` `[Unreleased]`, `docs/TOOLS.md`, `README.md` feature list, `.devdocs/ROADMAP.md` status row; this file only if architecture or a convention changed
 
@@ -201,6 +213,8 @@ These are the cross-cutting rules that recur across releases. Each was learned t
 - **Standing key policy:** no tool ever *requires* a key; a keyed feature needs a usable free tier; say plainly when a "free tier" still needs a billing account.
 - **Attribution strings that a licence mandates are exact** (`Source: Includes weather data from Google`, `Source: Includes pollen data from Google`) — do not reword. Licensed alert text renders verbatim with issue times as published.
 - Persist nothing from Google APIs beyond the in-memory cache (ToS).
+- **Inbound API keys (HTTP transport) follow the outbound key-in-URL discipline in reverse:** only the SHA-256 is retained, verification is a hash-map probe so no path branches on a partial match, a too-short key is refused *at startup*, and the raw key never reaches a log line, an error message, or a filesystem path — downstream code identifies a caller by the derived `keyId` alone.
+- **Over HTTP one process serves many callers.** Per-caller state is injected through `WeatherServerOptions`, never a module singleton, and rendered output must not disclose server internals — the saved-location store's path line is suppressed there (`LocationStore`'s `disclosePath`, default true so stdio is byte-identical).
 
 ### Caching and concurrency
 
@@ -221,8 +235,9 @@ These are the cross-cutting rules that recur across releases. Each was learned t
 
 ```
 tests/
-├── unit/          # ~80 files; fast, no I/O. Fixture-based handler/service tests plus pure-module tests
-└── integration/   # ~13 files; some make live network calls and can flake — re-run before blaming a diff
+├── unit/          # ~86 files; fast, no I/O. Fixture-based handler/service tests plus pure-module tests
+└── integration/   # ~14 files; some make live network calls and can flake — re-run before blaming a diff.
+                   #   http-transport.test.ts is the exception: loopback only, never the network
 ```
 
 Named by subject (`<feature>-handler.test.ts`, `<util>.test.ts`, `<feature>-routing.test.ts`). When a change must leave an existing path untouched, the existing test file for that path is the **lock** — it should pass unedited; if you have to edit it, the path changed.
@@ -365,7 +380,21 @@ WEATHER_UNITS=imperial         # imperial | metric (default: imperial)
 
 # Logging
 LOG_LEVEL=1                    # 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: 1)
+
+# Remote HTTP transport (only read by `npm run start:http`; stdio ignores these)
+WEATHER_API_KEYS=label:key,... # REQUIRED for HTTP. Min 24 chars per key
+WEATHER_HTTP_HOST / _PORT / _PATH          # bind address and MCP base path (default 0.0.0.0:8080 /mcp)
+WEATHER_DATA_DIR=...           # per-key saved-location root (one subdir per keyId)
+WEATHER_HTTP_RATE_LIMIT=120    # per-key requests/minute; 0 disables
+WEATHER_HTTP_MAX_BODY_BYTES=1048576
+WEATHER_HTTP_JSON_RESPONSE=true            # one JSON body instead of an SSE stream
+WEATHER_HTTP_ALLOWED_HOSTS / _ORIGINS      # DNS-rebinding protection; empty = off
+WEATHER_CHATGPT_COMPAT=false   # expose the ChatGPT search/fetch tools
 ```
+
+HTTP variables are validated in `src/config/http.ts` (strict: a malformed value
+throws at startup rather than falling back). Deployment walkthrough:
+`docs/DEPLOY_HTTP.md`.
 
 Cache/API/logging variables are validated in `src/config/cache.ts`; unit variables
 are parsed and validated in `src/config/units.ts`; optional keys in `src/config/api.ts`.
@@ -450,7 +479,7 @@ import { resolveLocationAsync } from '../utils/locationResolver.js';
 const resolved = await resolveLocationAsync(args as YourToolArgs, locationStore, geocodingService);
 const { latitude, longitude } = resolved;
 
-// 3. Spread LOCATION_SCHEMA_PROPERTIES into the tool's inputSchema.properties in src/index.ts
+// 3. Spread LOCATION_SCHEMA_PROPERTIES into the tool's inputSchema.properties in src/server/weatherServer.ts
 //    and leave `required: []`.
 ```
 
@@ -516,7 +545,7 @@ tools use to skip the reverse-geocode lookup.
 1. Create handler: `src/handlers/newFeatureHandler.ts`
 2. Define types: `src/types/<upstream>.ts`
 3. Add service method if needed: `src/services/`
-4. Register tool in `src/index.ts` (`TOOL_DEFINITIONS` + dispatch) and in `src/config/tools.ts` (`ToolName`, presets)
+4. Register tool in `src/server/weatherServer.ts` (`TOOL_DEFINITIONS` + dispatch) and in `src/config/tools.ts` (`ToolName`, presets)
 5. Write tests: `tests/unit/` and `tests/integration/`
 6. Update documentation: `docs/TOOLS.md`, `README.md`, `CHANGELOG.md`
 
@@ -572,8 +601,8 @@ npm audit             # No critical vulnerabilities
 ## Project Status
 
 - **Version:** 1.23.0 — Production Ready ✅
-- **Unreleased on `main`:** heat/cold stress context on `get_current_conditions` (#68) — will ship as v1.24.0
-- **Test Coverage:** 2,332 tests, 100% pass rate
+- **Unreleased on `main`:** heat/cold stress context on `get_current_conditions` (#68); Streamable HTTP transport for hosted deployments (`docs/DEPLOY_HTTP.md`) — will ship as v1.24.0
+- **Test Coverage:** 2,386 tests, 100% pass rate
 - **Security Rating:** A- (Excellent, 93/100) · **Code Quality:** A+ (Excellent, 97.5/100)
 
 Recent releases (one line each; `scripts/update-docs-for-release.sh` prepends the new line and prunes the list to the newest three — detail lives in `CHANGELOG.md` and the plan docs under `.devdocs/archive/completed/`):
