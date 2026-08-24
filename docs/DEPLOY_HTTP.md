@@ -14,23 +14,89 @@ exactly as before, and nothing in this guide affects it.
 
 ---
 
-## 1. Generate API keys
+## 1. Set up keys
 
-One key per client, so you can revoke one without disturbing the other:
+### The model: tenants, not keys
+
+A **tenant** is a person or an installation. The tenant `id` is what identifies
+a caller everywhere: it names their saved-location directory and appears in
+logs. A tenant owns **one or more keys**, so:
+
+- one person can hold a Claude key *and* a ChatGPT key over the same saved
+  locations — save `home` in one, use it from the other;
+- a key can be rotated by adding the new one, switching clients over, then
+  removing the old one, with **no data loss** — the tenant id never changed;
+- a leaked key is revoked on its own, without disturbing anyone else.
+
+Nothing else is scoped per tenant. Every valid key can call every enabled tool;
+there is no permission model. A key is a door badge, not an account.
+
+### Generate keys
 
 ```bash
 openssl rand -base64 32 | tr -d '=+/'
 ```
 
-Keys must be at least 24 characters — the server refuses to start on anything
-shorter. Label them for readable logs:
+At least 24 characters — the server refuses to start on anything shorter. One
+key per client installation is the useful granularity.
+
+### The key file (recommended)
+
+```bash
+mkdir -p config
+cp keys.example.json config/keys.json
+$EDITOR config/keys.json
+```
+
+```json
+{
+  "tenants": [
+    {
+      "id": "kamil",
+      "label": "Kamil",
+      "keys": ["key-used-by-claude", "key-used-by-chatgpt"]
+    },
+    { "id": "alice", "keys": ["alices-key"] }
+  ]
+}
+```
+
+`id` is required and becomes a directory name, so it is restricted to `a-z`,
+`0-9`, dash and underscore (1–64 characters) — anything else is refused. `label`
+is optional and cosmetic. The file is re-read every
+`WEATHER_API_KEYS_RELOAD_SECONDS` (default 10), so **adding, rotating or
+revoking a person needs no restart**. To apply a change immediately:
+
+```bash
+docker compose kill -s HUP weather-mcp
+```
+
+Two properties worth relying on:
+
+- **A broken file never locks anyone out.** The running key set is replaced only
+  when a new file parses and validates completely. A syntax error, a truncated
+  write, or a deleted file leaves the previous set serving and logs the failure.
+  Watch for `API key reload failed` in the logs — that means your edit did *not*
+  take effect.
+- **The file must sit in a mounted directory**, which is why the compose file
+  mounts `./config` rather than the file itself. Bind-mounting a single file
+  pins an inode, and most editors replace the inode on save; the container would
+  go on reading the old file and reload would silently stop working.
+
+### Or: keys in the environment
+
+Simpler, at the cost of a restart per change:
 
 ```
-WEATHER_API_KEYS=claude:Xk9...,chatgpt:Qm2...
+WEATHER_API_KEYS=kamil:key-for-claude,kamil:key-for-chatgpt,alice:her-key
 ```
 
-Labels are cosmetic. Only the key is checked, and only its SHA-256 is kept in
-memory; the raw key never reaches a log line, an error message, or a file path.
+Entries sharing a name become **one tenant with several keys**, exactly as in
+the file form. An unlabelled bare key still works, but its tenant id is derived
+from the key itself — so rotating it starts a fresh, empty saved-location
+namespace. The server warns about this at startup; name your tenants.
+
+`WEATHER_API_KEYS_FILE` takes precedence when both are set.
 
 ### What a key in the URL costs you
 
@@ -41,10 +107,11 @@ because several client UIs cannot send a custom header. Understand the exposure:
 |---|---|
 | The key lands in reverse-proxy access logs | Turn off access logging for the MCP location (§3), or use the `Authorization` header where the client supports it |
 | The key appears in browser history / `Referer` | Nothing on this server pastes the URL into a page; do not paste it into one yourself |
-| A leaked key is usable by anyone | Keys are independent — drop the leaked entry from `WEATHER_API_KEYS` and restart |
+| A leaked key is usable by anyone | Remove that one key from the tenant's `keys` array; the change is live within seconds |
 
-There is no user model behind a key, so treat each one as full access to the
-tools and to that key's saved locations.
+Only the SHA-256 of each key is kept in memory. The raw key never reaches a log
+line, an error message, or a filesystem path — logs identify callers by tenant
+id and label only.
 
 ---
 
@@ -54,7 +121,8 @@ tools and to that key's saved locations.
 git clone https://github.com/weather-mcp/weather-mcp.git
 cd weather-mcp
 cp .env.http.example .env
-$EDITOR .env                 # set WEATHER_API_KEYS at minimum
+mkdir -p config && cp keys.example.json config/keys.json
+$EDITOR config/keys.json      # define your tenants and their keys
 docker compose up -d --build
 ```
 
@@ -74,9 +142,9 @@ curl -s -X POST http://127.0.0.1:8787/mcp/$KEY \
 The compose file publishes on `127.0.0.1:8787` only — the public hostname and
 TLS belong to the reverse proxy.
 
-**Saved locations** live in `./data`, one directory per key (named by a hash
-prefix of the key, never the key itself). Back that directory up; deleting it
-loses everyone's aliases.
+**Saved locations** live in `./data`, one directory per tenant id — `./data/kamil/locations.json`.
+Back that directory up; deleting it loses everyone's aliases. To rename a tenant,
+stop the server, rename both the id in the key file and the directory, and start it again.
 
 ---
 
@@ -215,7 +283,12 @@ Failure responses are JSON-RPC error objects:
 - **Run it as a long-lived process, not a serverless function.** The LRU caches
   and the lightning tool's persistent MQTT connection both assume a process that
   stays up.
-- **Rate limiting is per process.** Two replicas mean two budgets.
+- **Rate limiting is per tenant, per process.** All of a tenant's keys draw on
+  one budget; two replicas mean two budgets.
+- **Key changes need no deploy** when using the key file — edit
+  `config/keys.json` and the running server picks it up. Confirm with the
+  `API keys reloaded` log line, which reports which tenant ids were added and
+  removed.
 - **Upstream courtesy.** NOAA, Open-Meteo, Nominatim and the rest are free
   services with their own limits. `WEATHER_HTTP_RATE_LIMIT` is what stands
   between a runaway client and your IP getting blocked upstream.

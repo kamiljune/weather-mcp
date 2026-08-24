@@ -44,6 +44,7 @@ function main(): void {
       logger.info('HTTP listener closed');
 
       rateLimiter.stopSweeping();
+      apiKeys.stopWatching();
       await analytics.shutdown();
       noaaService.clearCache();
       openMeteoService.clearCache();
@@ -59,15 +60,31 @@ function main(): void {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
+  // Force an immediate key reload without waiting for the poll interval:
+  //   docker compose kill -s HUP weather-mcp
+  process.on('SIGHUP', () => {
+    if (!apiKeys.reloadable) {
+      logger.warn('SIGHUP ignored: keys come from WEATHER_API_KEYS, which is read once at startup', {
+        service: 'http'
+      });
+      return;
+    }
+    logger.info('SIGHUP received, reloading API keys', { service: 'http' });
+    apiKeys.reload();
+  });
+
   server.listen(config.port, config.host, () => {
     logger.info('Weather MCP HTTP server listening', {
       version: SERVER_VERSION,
       host: config.host,
       port: config.port,
       endpoint: `${config.basePath}/<api-key>`,
-      apiKeys: apiKeys.size,
+      tenants: apiKeys.current.tenantCount,
+      apiKeys: apiKeys.current.size,
       // Labels are operator-chosen names, never key material.
-      apiKeyLabels: apiKeys.labels.join(', '),
+      apiKeyLabels: apiKeys.current.labels.join(', '),
+      keySource: apiKeys.filePath ?? 'WEATHER_API_KEYS (fixed until restart)',
+      keyReload: apiKeys.reloadable ? `every ${config.apiKeysReloadSeconds}s + SIGHUP` : 'restart required',
       rateLimitPerMinute: config.rateLimitPerMinute,
       jsonResponse: config.jsonResponse,
       chatgptCompat: config.chatgptCompat,

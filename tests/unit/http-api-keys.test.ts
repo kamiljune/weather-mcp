@@ -1,87 +1,227 @@
 import { describe, it, expect } from 'vitest';
-import { ApiKeyRegistry, bearerToken } from '../../src/http/apiKeys.js';
+import {
+  ApiKeyRegistry,
+  bearerToken,
+  derivedTenantId,
+  normalizeTenantId,
+  parseKeySpec,
+  parseKeysDocument
+} from '../../src/http/apiKeys.js';
 
 const KEY_A = 'wx_alpha_key_aaaaaaaaaaaaaaaaaaaa';
 const KEY_B = 'wx_beta_key_bbbbbbbbbbbbbbbbbbbbbb';
+const KEY_C = 'wx_gamma_key_cccccccccccccccccccc';
 
-describe('ApiKeyRegistry', () => {
-  it('accepts a single unlabelled key', () => {
-    const registry = new ApiKeyRegistry(KEY_A);
+function registry(spec: string): ApiKeyRegistry {
+  return new ApiKeyRegistry(parseKeySpec(spec));
+}
 
-    expect(registry.size).toBe(1);
-    expect(registry.verify(KEY_A)).not.toBeNull();
+describe('normalizeTenantId', () => {
+  it('lowercases and trims', () => {
+    expect(normalizeTenantId('  Kamil  ', 'test')).toBe('kamil');
   });
 
-  it('parses labelled entries and exposes the labels', () => {
-    const registry = new ApiKeyRegistry(`alice:${KEY_A}, bob:${KEY_B}`);
-
-    expect(registry.size).toBe(2);
-    expect(registry.labels).toEqual(['alice', 'bob']);
-    expect(registry.verify(KEY_A)?.label).toBe('alice');
-    expect(registry.verify(KEY_B)?.label).toBe('bob');
+  it('accepts dashes, underscores and digits', () => {
+    expect(normalizeTenantId('team-a_2', 'test')).toBe('team-a_2');
   });
 
-  it('gives each key a distinct, stable, non-secret id', () => {
-    const first = new ApiKeyRegistry(`alice:${KEY_A}, bob:${KEY_B}`);
-    const second = new ApiKeyRegistry(`renamed:${KEY_A}`);
-
-    const idA = first.verify(KEY_A)!.id;
-    const idB = first.verify(KEY_B)!.id;
-
-    expect(idA).not.toBe(idB);
-    // Stable across processes and independent of the label, so saved locations survive restarts.
-    expect(second.verify(KEY_A)!.id).toBe(idA);
-    // The id is a hash prefix, never key material.
-    expect(idA).toMatch(/^[0-9a-f]{12}$/);
-    expect(KEY_A).not.toContain(idA);
+  it('rejects anything that could escape a directory', () => {
+    // The id becomes a path segment, so this is the load-bearing guard.
+    for (const bad of ['..', '../etc', 'a/b', 'a\\b', '/abs', 'a b', 'a.b', '', '   ']) {
+      expect(() => normalizeTenantId(bad, 'test')).toThrow();
+    }
   });
 
-  it('rejects unknown, empty and absent keys', () => {
-    const registry = new ApiKeyRegistry(KEY_A);
-
-    expect(registry.verify('not-a-real-key-000000000000')).toBeNull();
-    expect(registry.verify('')).toBeNull();
-    expect(registry.verify(undefined)).toBeNull();
-    expect(registry.verify(null)).toBeNull();
+  it('rejects a non-string id', () => {
+    expect(() => normalizeTenantId(undefined, 'test')).toThrow(/required/);
+    expect(() => normalizeTenantId(42, 'test')).toThrow(/required/);
   });
 
-  it('rejects a near-miss rather than accepting a prefix', () => {
-    const registry = new ApiKeyRegistry(KEY_A);
+  it('rejects an over-long id', () => {
+    expect(() => normalizeTenantId('a'.repeat(65), 'test')).toThrow(/invalid/);
+    expect(normalizeTenantId('a'.repeat(64), 'test')).toHaveLength(64);
+  });
+});
 
-    expect(registry.verify(KEY_A.slice(0, -1))).toBeNull();
-    expect(registry.verify(`${KEY_A}x`)).toBeNull();
-    expect(registry.verify(KEY_A.toUpperCase())).toBeNull();
+describe('parseKeySpec', () => {
+  it('treats a labelled entry as a named tenant', () => {
+    expect(parseKeySpec(`kamil:${KEY_A}`)).toEqual([
+      { id: 'kamil', label: 'kamil', keys: [KEY_A] }
+    ]);
+  });
+
+  it('groups entries that share a label into one tenant with several keys', () => {
+    const tenants = parseKeySpec(`kamil:${KEY_A}, kamil:${KEY_B}, alice:${KEY_C}`);
+
+    expect(tenants).toHaveLength(2);
+    expect(tenants[0]).toMatchObject({ id: 'kamil', keys: [KEY_A, KEY_B] });
+    expect(tenants[1]).toMatchObject({ id: 'alice', keys: [KEY_C] });
+  });
+
+  it('derives an id for an unlabelled key and warns about rotation', () => {
+    const warnings: string[] = [];
+    const tenants = parseKeySpec(KEY_A, message => warnings.push(message));
+
+    expect(tenants[0].id).toBe(derivedTenantId(KEY_A));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/rotating it/);
+    // The warning must not carry the key it is warning about.
+    expect(warnings[0]).not.toContain(KEY_A);
   });
 
   it('ignores blank entries and surrounding whitespace', () => {
-    const registry = new ApiKeyRegistry(`  ${KEY_A} , , ${KEY_B}  `);
-
-    expect(registry.size).toBe(2);
-    expect(registry.verify(KEY_A)).not.toBeNull();
+    expect(parseKeySpec(`  a:${KEY_A} , , b:${KEY_B}  `)).toHaveLength(2);
   });
 
   it('keeps colons that belong to the key itself', () => {
     const keyWithColon = 'wx:key:with:colons:aaaaaaaaaaaaaa';
-    const registry = new ApiKeyRegistry(`label:${keyWithColon}`);
+    expect(parseKeySpec(`label:${keyWithColon}`)[0].keys).toEqual([keyWithColon]);
+  });
 
-    expect(registry.verify(keyWithColon)?.label).toBe('label');
+  it('refuses a spec with no usable keys', () => {
+    expect(() => parseKeySpec(' , , ')).toThrow(/no usable keys/);
+  });
+
+  it('refuses a label that is not a usable tenant id', () => {
+    expect(() => parseKeySpec(`../evil:${KEY_A}`)).toThrow(/invalid/);
+  });
+});
+
+describe('parseKeysDocument', () => {
+  const valid = {
+    tenants: [
+      { id: 'kamil', label: 'Kamil', keys: [KEY_A, KEY_B] },
+      { id: 'alice', keys: [KEY_C] }
+    ]
+  };
+
+  it('parses a well-formed document', () => {
+    expect(parseKeysDocument(valid)).toEqual([
+      { id: 'kamil', label: 'Kamil', keys: [KEY_A, KEY_B] },
+      { id: 'alice', keys: [KEY_C] }
+    ]);
+  });
+
+  it('rejects a document that is not an object with tenants', () => {
+    expect(() => parseKeysDocument(null)).toThrow(/must be a JSON object/);
+    expect(() => parseKeysDocument([])).toThrow(/must be a JSON object/);
+    expect(() => parseKeysDocument({})).toThrow(/"tenants" array/);
+    expect(() => parseKeysDocument({ tenants: {} })).toThrow(/"tenants" array/);
+    expect(() => parseKeysDocument({ tenants: [] })).toThrow(/empty/);
+  });
+
+  it('reports the position of a malformed tenant', () => {
+    expect(() => parseKeysDocument({ tenants: [valid.tenants[0], 'nope'] }))
+      .toThrow(/tenant #2 must be an object/);
+  });
+
+  it('requires a non-empty keys array', () => {
+    expect(() => parseKeysDocument({ tenants: [{ id: 'a', keys: [] }] }))
+      .toThrow(/non-empty "keys"/);
+    expect(() => parseKeysDocument({ tenants: [{ id: 'a' }] }))
+      .toThrow(/non-empty "keys"/);
+  });
+
+  it('rejects a non-string label', () => {
+    expect(() => parseKeysDocument({ tenants: [{ id: 'a', label: 7, keys: [KEY_A] }] }))
+      .toThrow(/non-string "label"/);
+  });
+});
+
+describe('ApiKeyRegistry', () => {
+  it('resolves every key of a tenant to the same identity', () => {
+    const reg = registry(`kamil:${KEY_A}, kamil:${KEY_B}`);
+
+    expect(reg.tenantCount).toBe(1);
+    expect(reg.size).toBe(2);
+    expect(reg.verify(KEY_A)).toEqual(reg.verify(KEY_B));
+    expect(reg.verify(KEY_A)?.id).toBe('kamil');
+  });
+
+  it('keeps the tenant id independent of the key, so rotation preserves identity', () => {
+    const before = registry(`kamil:${KEY_A}`);
+    const after = registry(`kamil:${KEY_B}`);
+
+    expect(after.verify(KEY_B)!.id).toBe(before.verify(KEY_A)!.id);
+    // ...and the retired key stops working.
+    expect(after.verify(KEY_A)).toBeNull();
+  });
+
+  it('rejects unknown, empty and absent keys', () => {
+    const reg = registry(`kamil:${KEY_A}`);
+
+    expect(reg.verify('not-a-real-key-000000000000')).toBeNull();
+    expect(reg.verify('')).toBeNull();
+    expect(reg.verify(undefined)).toBeNull();
+    expect(reg.verify(null)).toBeNull();
+  });
+
+  it('rejects a near-miss rather than accepting a prefix', () => {
+    const reg = registry(`kamil:${KEY_A}`);
+
+    expect(reg.verify(KEY_A.slice(0, -1))).toBeNull();
+    expect(reg.verify(`${KEY_A}x`)).toBeNull();
+    expect(reg.verify(KEY_A.toUpperCase())).toBeNull();
   });
 
   it('refuses a key shorter than the minimum without echoing it', () => {
     const shortKey = 'tooshort';
 
-    expect(() => new ApiKeyRegistry(`alice:${shortKey}`)).toThrow(/shorter than/);
     try {
-      new ApiKeyRegistry(`alice:${shortKey}`);
+      new ApiKeyRegistry([{ id: 'kamil', keys: [shortKey] }]);
       expect.unreachable('should have thrown');
     } catch (error) {
+      expect((error as Error).message).toMatch(/shorter than/);
       expect((error as Error).message).not.toContain(shortKey);
-      expect((error as Error).message).toContain('alice');
+      expect((error as Error).message).toContain('kamil');
     }
   });
 
-  it('refuses a spec with no usable keys', () => {
-    expect(() => new ApiKeyRegistry(' , , ')).toThrow(/no usable keys/);
+  it('refuses one key assigned to two tenants', () => {
+    expect(() => new ApiKeyRegistry([
+      { id: 'kamil', keys: [KEY_A] },
+      { id: 'alice', keys: [KEY_A] }
+    ])).toThrow(/assigned to both/);
+  });
+
+  it('refuses a duplicated tenant id', () => {
+    expect(() => new ApiKeyRegistry([
+      { id: 'kamil', keys: [KEY_A] },
+      { id: 'Kamil', keys: [KEY_B] }
+    ])).toThrow(/more than once/);
+  });
+
+  it('refuses an empty tenant list', () => {
+    expect(() => new ApiKeyRegistry([])).toThrow(/no tenants/);
+  });
+
+  it('exposes non-secret identifiers only', () => {
+    const reg = registry(`kamil:${KEY_A}, alice:${KEY_B}`);
+
+    expect(reg.tenantIds).toEqual(['kamil', 'alice']);
+    expect(reg.labels).toEqual(['kamil', 'alice']);
+    expect(JSON.stringify(reg.tenantIds)).not.toContain(KEY_A);
+  });
+
+  describe('equals', () => {
+    it('is true for the same tenants and keys', () => {
+      expect(registry(`kamil:${KEY_A}`).equals(registry(`kamil:${KEY_A}`))).toBe(true);
+    });
+
+    it('is false when a key is added, removed or reassigned', () => {
+      const base = registry(`kamil:${KEY_A}`);
+
+      expect(base.equals(registry(`kamil:${KEY_A}, kamil:${KEY_B}`))).toBe(false);
+      expect(base.equals(registry(`kamil:${KEY_B}`))).toBe(false);
+      expect(base.equals(registry(`alice:${KEY_A}`))).toBe(false);
+    });
+
+    it('is false when only the label changed', () => {
+      const a = new ApiKeyRegistry([{ id: 'kamil', label: 'Kamil', keys: [KEY_A] }]);
+      const b = new ApiKeyRegistry([{ id: 'kamil', label: 'Kamil J', keys: [KEY_A] }]);
+
+      expect(a.equals(b)).toBe(false);
+    });
   });
 });
 

@@ -26,9 +26,10 @@ src/
 ├── http/                    # Streamable HTTP transport (hosted deployments)
 │   ├── index.ts             # HTTP entry point (npm run start:http)
 │   ├── httpServer.ts        # routing, auth, stateless transport per request
-│   ├── apiKeys.ts           # API key registry — hash-only, never logs key material
-│   ├── tenants.ts           # per-key LocationStore namespaces
-│   └── rateLimit.ts         # per-key token bucket
+│   ├── apiKeys.ts           # tenant/key parsing + registry — hash-only, never logs key material
+│   ├── apiKeySource.ts      # live key set: file reload on change, last-good-wins on failure
+│   ├── tenants.ts           # per-tenant LocationStore namespaces
+│   └── rateLimit.ts         # per-tenant token bucket
 ├── handlers/                # One handler per MCP tool (saved locations share one file)
 │   ├── forecastHandler.ts           # get_forecast (+ compare_models, ensemble_spread, normals, astronomy)
 │   ├── currentConditionsHandler.ts  # get_current_conditions (NOAA / Open-Meteo / METAR; fire weather, thermal stress)
@@ -215,6 +216,8 @@ These are the cross-cutting rules that recur across releases. Each was learned t
 - Persist nothing from Google APIs beyond the in-memory cache (ToS).
 - **Inbound API keys (HTTP transport) follow the outbound key-in-URL discipline in reverse:** only the SHA-256 is retained, verification is a hash-map probe so no path branches on a partial match, a too-short key is refused *at startup*, and the raw key never reaches a log line, an error message, or a filesystem path — downstream code identifies a caller by the derived `keyId` alone.
 - **Over HTTP one process serves many callers.** Per-caller state is injected through `WeatherServerOptions`, never a module singleton, and rendered output must not disclose server internals — the saved-location store's path line is suppressed there (`LocationStore`'s `disclosePath`, default true so stdio is byte-identical).
+- **Identity is the tenant, not the credential.** Per-caller storage is keyed by an operator-chosen tenant id owning many keys, never by anything derived from a key — otherwise rotating a credential silently abandons that caller's data. A tenant id becomes a path segment, so it is pattern-validated before it ever reaches `join()`.
+- **A failed credential reload keeps the last good set.** Swap the registry only when a replacement parses and validates *completely*; a truncated write must never 401 every caller. Log the failure loudly (`securityEvent`) so a silently-ignored edit is visible.
 
 ### Caching and concurrency
 
@@ -235,7 +238,7 @@ These are the cross-cutting rules that recur across releases. Each was learned t
 
 ```
 tests/
-├── unit/          # ~86 files; fast, no I/O. Fixture-based handler/service tests plus pure-module tests
+├── unit/          # ~87 files; fast, no I/O. Fixture-based handler/service tests plus pure-module tests
 └── integration/   # ~14 files; some make live network calls and can flake — re-run before blaming a diff.
                    #   http-transport.test.ts is the exception: loopback only, never the network
 ```
@@ -382,10 +385,12 @@ WEATHER_UNITS=imperial         # imperial | metric (default: imperial)
 LOG_LEVEL=1                    # 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: 1)
 
 # Remote HTTP transport (only read by `npm run start:http`; stdio ignores these)
-WEATHER_API_KEYS=label:key,... # REQUIRED for HTTP. Min 24 chars per key
+WEATHER_API_KEYS_FILE=...      # JSON {"tenants":[{id,label,keys[]}]}, re-read on change
+WEATHER_API_KEYS_RELOAD_SECONDS=10         # key-file poll interval; 0 disables (SIGHUP always works)
+WEATHER_API_KEYS=name:key,...  # alternative to the file, read once at startup. Min 24 chars
 WEATHER_HTTP_HOST / _PORT / _PATH          # bind address and MCP base path (default 0.0.0.0:8080 /mcp)
-WEATHER_DATA_DIR=...           # per-key saved-location root (one subdir per keyId)
-WEATHER_HTTP_RATE_LIMIT=120    # per-key requests/minute; 0 disables
+WEATHER_DATA_DIR=...           # saved-location root (one subdir per tenant id)
+WEATHER_HTTP_RATE_LIMIT=120    # per-tenant requests/minute; 0 disables
 WEATHER_HTTP_MAX_BODY_BYTES=1048576
 WEATHER_HTTP_JSON_RESPONSE=true            # one JSON body instead of an SSE stream
 WEATHER_HTTP_ALLOWED_HOSTS / _ORIGINS      # DNS-rebinding protection; empty = off
@@ -602,7 +607,7 @@ npm audit             # No critical vulnerabilities
 
 - **Version:** 1.23.0 — Production Ready ✅
 - **Unreleased on `main`:** heat/cold stress context on `get_current_conditions` (#68); Streamable HTTP transport for hosted deployments (`docs/DEPLOY_HTTP.md`) — will ship as v1.24.0
-- **Test Coverage:** 2,386 tests, 100% pass rate
+- **Test Coverage:** 2,427 tests, 100% pass rate
 - **Security Rating:** A- (Excellent, 93/100) · **Code Quality:** A+ (Excellent, 97.5/100)
 
 Recent releases (one line each; `scripts/update-docs-for-release.sh` prepends the new line and prunes the list to the newest three — detail lives in `CHANGELOG.md` and the plan docs under `.devdocs/archive/completed/`):

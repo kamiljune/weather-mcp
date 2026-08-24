@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadHttpConfig } from '../../src/config/http.js';
 
 const HTTP_ENV_VARS = [
-  'WEATHER_API_KEYS', 'WEATHER_HTTP_HOST', 'WEATHER_HTTP_PORT', 'WEATHER_HTTP_PATH',
+  'WEATHER_API_KEYS', 'WEATHER_API_KEYS_FILE', 'WEATHER_API_KEYS_RELOAD_SECONDS', 'WEATHER_HTTP_HOST', 'WEATHER_HTTP_PORT', 'WEATHER_HTTP_PATH',
   'WEATHER_DATA_DIR', 'WEATHER_HTTP_RATE_LIMIT', 'WEATHER_HTTP_MAX_BODY_BYTES',
   'WEATHER_HTTP_ALLOWED_HOSTS', 'WEATHER_HTTP_ALLOWED_ORIGINS',
   'WEATHER_HTTP_JSON_RESPONSE', 'WEATHER_CHATGPT_COMPAT'
@@ -40,14 +40,29 @@ describe('loadHttpConfig', () => {
     // ChatGPT compatibility tools are opt-in so the default tool list is unchanged.
     expect(config.chatgptCompat).toBe(false);
     expect(config.allowedHosts).toEqual([]);
+    expect(config.apiKeysFile).toBeUndefined();
+    expect(config.apiKeysReloadSeconds).toBe(10);
   });
 
-  it('requires WEATHER_API_KEYS', () => {
+  it('requires a key source', () => {
     delete process.env.WEATHER_API_KEYS;
-    expect(() => loadHttpConfig()).toThrow(/WEATHER_API_KEYS is required/);
+    expect(() => loadHttpConfig()).toThrow(/WEATHER_API_KEYS_FILE/);
 
     process.env.WEATHER_API_KEYS = '   ';
-    expect(() => loadHttpConfig()).toThrow(/WEATHER_API_KEYS is required/);
+    expect(() => loadHttpConfig()).toThrow(/WEATHER_API_KEYS_FILE/);
+  });
+
+  it('accepts a key file as the sole key source', () => {
+    delete process.env.WEATHER_API_KEYS;
+    process.env.WEATHER_API_KEYS_FILE = '/data/keys.json';
+
+    const config = loadHttpConfig();
+    expect(config.apiKeysFile).toBe('/data/keys.json');
+  });
+
+  it('allows key-file watching to be switched off', () => {
+    process.env.WEATHER_API_KEYS_RELOAD_SECONDS = '0';
+    expect(loadHttpConfig().apiKeysReloadSeconds).toBe(0);
   });
 
   it('normalizes the base path', () => {

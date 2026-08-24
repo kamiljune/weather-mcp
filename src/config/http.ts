@@ -18,6 +18,9 @@ const DEFAULT_RATE_LIMIT_PER_MINUTE = 120;
 /** Default cap on a single JSON-RPC request body. */
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 
+/** Default seconds between key-file change checks. */
+const DEFAULT_KEY_RELOAD_SECONDS = 10;
+
 /** Lower bound on an API key, in characters. Shorter keys are refused at startup. */
 export const MIN_API_KEY_LENGTH = 24;
 
@@ -28,8 +31,15 @@ export interface HttpConfig {
   port: number;
   /** Base path for the MCP endpoint, without a trailing slash (default "/mcp"). */
   basePath: string;
-  /** Raw WEATHER_API_KEYS value; parsed by ApiKeyRegistry. */
+  /** Raw WEATHER_API_KEYS value; used only when no key file is configured. */
   apiKeysSpec: string;
+  /**
+   * Path to a JSON key file. When set it is the sole source of truth and is
+   * re-read on change, so tenants can be added or revoked without a restart.
+   */
+  apiKeysFile?: string;
+  /** Seconds between key-file change checks; 0 disables watching. */
+  apiKeysReloadSeconds: number;
   /** Root directory for per-API-key saved-location stores. */
   dataDir: string;
   /** Per-key requests per minute; 0 disables rate limiting. */
@@ -100,10 +110,13 @@ function parseBasePath(raw: string | undefined): string {
  */
 export function loadHttpConfig(): HttpConfig {
   const apiKeysSpec = process.env.WEATHER_API_KEYS ?? '';
-  if (apiKeysSpec.trim() === '') {
+  const apiKeysFile = process.env.WEATHER_API_KEYS_FILE?.trim() || undefined;
+
+  if (apiKeysFile === undefined && apiKeysSpec.trim() === '') {
     throw new Error(
-      'WEATHER_API_KEYS is required for the HTTP transport. Set it to one or more ' +
-      'comma-separated keys, optionally labelled as "label:key".'
+      'The HTTP transport needs either WEATHER_API_KEYS_FILE (a JSON key file, ' +
+      'reloaded on change) or WEATHER_API_KEYS (comma-separated keys, optionally ' +
+      'labelled as "name:key").'
     );
   }
 
@@ -112,6 +125,8 @@ export function loadHttpConfig(): HttpConfig {
     port: parseIntEnv('WEATHER_HTTP_PORT', DEFAULT_PORT, 1, 65535),
     basePath: parseBasePath(process.env.WEATHER_HTTP_PATH),
     apiKeysSpec,
+    ...(apiKeysFile === undefined ? {} : { apiKeysFile }),
+    apiKeysReloadSeconds: parseIntEnv('WEATHER_API_KEYS_RELOAD_SECONDS', DEFAULT_KEY_RELOAD_SECONDS, 0, 3600),
     dataDir: process.env.WEATHER_DATA_DIR?.trim() || join(homedir(), '.weather-mcp', 'tenants'),
     rateLimitPerMinute: parseIntEnv('WEATHER_HTTP_RATE_LIMIT', DEFAULT_RATE_LIMIT_PER_MINUTE, 0, 100000),
     maxBodyBytes: parseIntEnv('WEATHER_HTTP_MAX_BODY_BYTES', DEFAULT_MAX_BODY_BYTES, 1024, 32 * 1024 * 1024),

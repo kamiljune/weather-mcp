@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server as NodeHttpServer } from 'http';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { HttpConfig } from '../../src/config/http.js';
@@ -23,6 +23,7 @@ const MCP_HEADERS = {
 
 let createHttpServer: (config: HttpConfig) => {
   server: NodeHttpServer;
+  apiKeys: { stopWatching(): void; reload(): boolean };
   rateLimiter: { stopSweeping(): void };
 };
 let dataDir: string;
@@ -33,6 +34,7 @@ function baseConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
     port: 0,
     basePath: '/mcp',
     apiKeysSpec: `alice:${KEY_ALICE},bob:${KEY_BOB}`,
+    apiKeysReloadSeconds: 0,
     dataDir,
     rateLimitPerMinute: 0,
     maxBodyBytes: 1024 * 1024,
@@ -45,8 +47,12 @@ function baseConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
 }
 
 /** Start a server on an ephemeral port and return its base URL plus a stopper. */
-async function startServer(config: HttpConfig): Promise<{ url: string; stop: () => Promise<void> }> {
-  const { server, rateLimiter } = createHttpServer(config);
+async function startServer(config: HttpConfig): Promise<{
+  url: string;
+  reloadKeys: () => boolean;
+  stop: () => Promise<void>;
+}> {
+  const { server, apiKeys, rateLimiter } = createHttpServer(config);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
 
   const address = server.address();
@@ -56,8 +62,10 @@ async function startServer(config: HttpConfig): Promise<{ url: string; stop: () 
 
   return {
     url: `http://127.0.0.1:${address.port}`,
+    reloadKeys: () => apiKeys.reload(),
     stop: async () => {
       rateLimiter.stopSweeping();
+      apiKeys.stopWatching();
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
   };
@@ -233,6 +241,78 @@ describe('HTTP transport — per-key isolation', () => {
 
     expect(listing).not.toContain('Storage location');
     expect(listing).not.toContain(dataDir);
+  });
+});
+
+describe('HTTP transport — key file hot reload', () => {
+  let keyFile: string;
+  let server: { url: string; reloadKeys: () => boolean; stop: () => Promise<void> };
+
+  const NEW_KEY = 'wx_carol_key_cccccccccccccccccccc';
+  const ROTATED_ALICE_KEY = 'wx_alice_rotated_kkkkkkkkkkkkkkkkkk';
+
+  function writeKeys(tenants: unknown): void {
+    writeFileSync(keyFile, JSON.stringify({ tenants }), 'utf-8');
+  }
+
+  async function statusFor(key: string): Promise<number> {
+    const response = await fetch(`${server.url}/mcp/${key}`, {
+      method: 'POST', headers: MCP_HEADERS, body: rpc('tools/list')
+    });
+    await response.arrayBuffer();
+    return response.status;
+  }
+
+  beforeAll(async () => {
+    keyFile = join(dataDir, 'keys.json');
+    writeKeys([{ id: 'alice', keys: [KEY_ALICE] }]);
+    // pollSeconds 0: the test drives reload() directly so it stays deterministic.
+    server = await startServer(baseConfig({ apiKeysFile: keyFile, apiKeysReloadSeconds: 0 }));
+  });
+
+  afterAll(async () => { await server.stop(); });
+
+  it('admits a tenant added to the file, with no restart', async () => {
+    expect(await statusFor(NEW_KEY)).toBe(401);
+
+    writeKeys([{ id: 'alice', keys: [KEY_ALICE] }, { id: 'carol', keys: [NEW_KEY] }]);
+    expect(server.reloadKeys()).toBe(true);
+
+    expect(await statusFor(NEW_KEY)).toBe(200);
+    expect(await statusFor(KEY_ALICE)).toBe(200);
+  });
+
+  it('revokes a tenant removed from the file', async () => {
+    writeKeys([{ id: 'alice', keys: [KEY_ALICE] }]);
+    expect(server.reloadKeys()).toBe(true);
+
+    expect(await statusFor(NEW_KEY)).toBe(401);
+  });
+
+  it('keeps saved locations across a key rotation', async () => {
+    const before = await callTool(`${server.url}/mcp/${KEY_ALICE}`, 'save_location', {
+      alias: 'cabin', latitude: 39.0968, longitude: -120.0324, name: 'Lake Tahoe, CA'
+    });
+    expect(before).toContain('cabin');
+
+    // Same tenant id, different key — the identity, and therefore the data, survives.
+    writeKeys([{ id: 'alice', keys: [ROTATED_ALICE_KEY] }]);
+    expect(server.reloadKeys()).toBe(true);
+
+    expect(await statusFor(KEY_ALICE)).toBe(401);
+    const listing = await callTool(`${server.url}/mcp/${ROTATED_ALICE_KEY}`, 'list_saved_locations', {});
+    expect(listing).toContain('cabin');
+  });
+
+  it('names the storage directory by tenant id, not by key', () => {
+    expect(existsSync(join(dataDir, 'alice', 'locations.json'))).toBe(true);
+  });
+
+  it('keeps serving the last good key set when the file breaks', async () => {
+    writeFileSync(keyFile, '{ "tenants": [', 'utf-8');
+
+    expect(server.reloadKeys()).toBe(false);
+    expect(await statusFor(ROTATED_ALICE_KEY)).toBe(200);
   });
 });
 

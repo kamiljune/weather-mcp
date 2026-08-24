@@ -16,8 +16,12 @@ services:
       # host:container — only the reverse proxy on this machine should reach it.
       - "127.0.0.1:8787:8080"
     volumes:
-      # Saved locations, one directory per API key id.
+      # Saved locations, one directory per tenant id.
       - ./data:/data
+      # API keys. Mounted as a DIRECTORY, not a single file: editing a
+      # bind-mounted file usually replaces its inode, and the container would
+      # keep reading the old one — hot reload would silently stop working.
+      - ./config:/config:ro
     logging:
       driver: json-file
       options:

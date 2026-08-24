@@ -16,7 +16,8 @@
 import { createServer, type IncomingMessage, type Server as NodeHttpServer, type ServerResponse } from 'http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { HttpConfig } from '../config/http.js';
-import { ApiKeyRegistry, bearerToken, type ApiKeyRecord } from './apiKeys.js';
+import { bearerToken, type ApiKeyRecord } from './apiKeys.js';
+import { ApiKeySource } from './apiKeySource.js';
 import { RateLimiter } from './rateLimit.js';
 import { TenantRegistry } from './tenants.js';
 import { createWeatherServer, SERVER_NAME, SERVER_VERSION } from '../server/weatherServer.js';
@@ -146,7 +147,8 @@ function isMcpPath(pathname: string, basePath: string): boolean {
 
 export interface HttpServerDeps {
   config: HttpConfig;
-  apiKeys: ApiKeyRegistry;
+  /** Live key set — read per request so a file reload takes effect immediately. */
+  apiKeys: ApiKeySource;
   tenants: TenantRegistry;
   rateLimiter: RateLimiter;
 }
@@ -203,7 +205,7 @@ export function createRequestListener(deps: HttpServerDeps) {
     }
 
     const presentedKey = extractApiKey(req, url, config.basePath);
-    const keyRecord: ApiKeyRecord | null = apiKeys.verify(presentedKey);
+    const keyRecord: ApiKeyRecord | null = apiKeys.current.verify(presentedKey);
     if (!keyRecord) {
       logger.warn('Rejected unauthenticated MCP request', {
         service: 'http',
@@ -300,10 +302,15 @@ export function createRequestListener(deps: HttpServerDeps) {
  */
 export function createHttpServer(config: HttpConfig): {
   server: NodeHttpServer;
-  apiKeys: ApiKeyRegistry;
+  apiKeys: ApiKeySource;
   rateLimiter: RateLimiter;
 } {
-  const apiKeys = new ApiKeyRegistry(config.apiKeysSpec);
+  const apiKeys = new ApiKeySource({
+    ...(config.apiKeysFile === undefined ? {} : { filePath: config.apiKeysFile }),
+    spec: config.apiKeysSpec,
+    pollSeconds: config.apiKeysReloadSeconds
+  });
+  apiKeys.startWatching();
   const tenants = new TenantRegistry(config.dataDir);
   const rateLimiter = new RateLimiter(config.rateLimitPerMinute);
   rateLimiter.startSweeping();

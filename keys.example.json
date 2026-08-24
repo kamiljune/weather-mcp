@@ -1,0 +1,21 @@
+{
+  "_comment": "Copy to config/keys.json (see docs/DEPLOY_HTTP.md). Each tenant is a person or an installation: the id names their saved-location directory and never changes, while keys can be added, rotated and revoked freely. The running server re-reads this file within seconds — no restart.",
+
+  "tenants": [
+    {
+      "id": "kamil",
+      "label": "Kamil",
+      "keys": [
+        "REPLACE_ME_claude_key_at_least_24_chars",
+        "REPLACE_ME_chatgpt_key_at_least_24_chars"
+      ]
+    },
+    {
+      "id": "alice",
+      "label": "Alice",
+      "keys": [
+        "REPLACE_ME_alice_key_at_least_24_chars"
+      ]
+    }
+  ]
+}
