@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadHttpConfig } from '../../src/config/http.js';
 
 const HTTP_ENV_VARS = [
-  'WEATHER_API_KEYS', 'WEATHER_API_KEYS_FILE', 'WEATHER_API_KEYS_RELOAD_SECONDS', 'WEATHER_HTTP_HOST', 'WEATHER_HTTP_PORT', 'WEATHER_HTTP_PATH',
+  'WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE', 'WEATHER_PUBLIC_BASE_URL',
+  'WEATHER_GARMIN_AUTHZ_URL', 'WEATHER_TENANT_ALIASES_FILE',
+  'WEATHER_HTTP_HOST', 'WEATHER_HTTP_PORT', 'WEATHER_HTTP_PATH',
   'WEATHER_DATA_DIR', 'WEATHER_HTTP_RATE_LIMIT', 'WEATHER_HTTP_MAX_BODY_BYTES',
   'WEATHER_HTTP_ALLOWED_HOSTS', 'WEATHER_HTTP_ALLOWED_ORIGINS',
   'WEATHER_HTTP_JSON_RESPONSE', 'WEATHER_CHATGPT_COMPAT'
@@ -16,7 +18,10 @@ describe('loadHttpConfig', () => {
     for (const name of HTTP_ENV_VARS) {
       delete process.env[name];
     }
-    process.env.WEATHER_API_KEYS = 'wx_test_key_aaaaaaaaaaaaaaaaaaaaaa';
+    process.env.WEATHER_AUTH0_DOMAIN = 'example.auth0.com';
+    process.env.WEATHER_AUTH0_AUDIENCE = 'https://weather.example.com/mcp';
+    process.env.WEATHER_PUBLIC_BASE_URL = 'https://weather.example.com';
+    process.env.WEATHER_GARMIN_AUTHZ_URL = 'http://garmin-api:8412/internal/weather/identity';
   });
 
   afterEach(() => {
@@ -40,34 +45,32 @@ describe('loadHttpConfig', () => {
     // ChatGPT compatibility tools are opt-in so the default tool list is unchanged.
     expect(config.chatgptCompat).toBe(false);
     expect(config.allowedHosts).toEqual([]);
-    expect(config.apiKeysFile).toBeUndefined();
-    expect(config.apiKeysReloadSeconds).toBe(10);
+    expect(config.auth0Domain).toBe('example.auth0.com');
+    expect(config.auth0Audience).toBe('https://weather.example.com/mcp');
+    expect(config.tenantAliasesFile).toBeUndefined();
   });
 
-  it('requires a key source', () => {
-    delete process.env.WEATHER_API_KEYS;
-    expect(() => loadHttpConfig()).toThrow(/WEATHER_API_KEYS_FILE/);
-
-    process.env.WEATHER_API_KEYS = '   ';
-    expect(() => loadHttpConfig()).toThrow(/WEATHER_API_KEYS_FILE/);
-  });
-
-  it('accepts a key file as the sole key source', () => {
-    delete process.env.WEATHER_API_KEYS;
-    process.env.WEATHER_API_KEYS_FILE = '/data/keys.json';
-
-    const config = loadHttpConfig();
-    expect(config.apiKeysFile).toBe('/data/keys.json');
-  });
-
-  it('allows key-file watching to be switched off', () => {
-    process.env.WEATHER_API_KEYS_RELOAD_SECONDS = '0';
-    expect(loadHttpConfig().apiKeysReloadSeconds).toBe(0);
+  it('requires the complete OAuth and Garmin authorization configuration', () => {
+    for (const name of [
+      'WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE',
+      'WEATHER_PUBLIC_BASE_URL', 'WEATHER_GARMIN_AUTHZ_URL'
+    ]) {
+      const value = process.env[name];
+      delete process.env[name];
+      expect(() => loadHttpConfig()).toThrow(new RegExp(name));
+      process.env[name] = value;
+    }
   });
 
   it('normalizes the base path', () => {
     process.env.WEATHER_HTTP_PATH = '/weather/mcp/';
+    process.env.WEATHER_AUTH0_AUDIENCE = 'https://weather.example.com/weather/mcp';
     expect(loadHttpConfig().basePath).toBe('/weather/mcp');
+  });
+
+  it('requires the OAuth audience to equal the public MCP URL exactly', () => {
+    process.env.WEATHER_AUTH0_AUDIENCE = 'https://weather.example.com/mcp/';
+    expect(() => loadHttpConfig()).toThrow(/must equal the public MCP resource URL/);
   });
 
   it('rejects a base path without a leading slash', () => {

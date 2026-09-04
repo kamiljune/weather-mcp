@@ -27,7 +27,7 @@ export class RateLimiter {
   private sweepTimer: NodeJS.Timeout | null = null;
 
   /**
-   * @param perMinute Requests per minute per key. 0 disables limiting entirely.
+   * @param perMinute Requests per minute per tenant. 0 disables limiting entirely.
    */
   constructor(private readonly perMinute: number) {
     this.refillPerMs = perMinute / 60000;

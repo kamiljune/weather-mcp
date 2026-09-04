@@ -186,23 +186,19 @@ your own, over the MCP Streamable HTTP transport:
 
 ```bash
 cp .env.http.example .env
-mkdir -p config && cp keys.example.json config/keys.json   # define who may call
+docker network create mcp-internal                         # one-time on the host
+mkdir -p config && cp tenant-aliases.example.json config/tenant-aliases.json
 docker compose up -d --build
 ```
 
-Clients then connect to `https://your.domain/mcp/<api-key>` — the key rides in
-the URL path, because that is the one form every remote-MCP client UI can
-express; `Authorization: Bearer <key>` is accepted wherever the client supports
-headers.
+Clients connect to `https://your.domain/mcp` and complete Auth0 OAuth. Weather
+validates the access token locally, then asks Garmin's private authorization
+endpoint whether the same Auth0 `sub` belongs to an active `/connect` user.
+Garmin's user slug selects the saved-location namespace and rate-limit budget;
+legacy directory names can be preserved with an explicit alias file.
 
-Access is organised by **tenant** — a person or installation — rather than by
-key. A tenant holds one or more keys over one saved-location namespace and one
-rate-limit budget, so a key can be rotated or a second client added without
-losing data, and a leaked key is revoked on its own. The key file is re-read
-while the server runs, so adding or revoking someone needs no restart.
-
-Full walkthrough — key generation, Docker, 1Panel/nginx/Caddy reverse proxy, TLS,
-and connecting each client: **[docs/DEPLOY_HTTP.md](./docs/DEPLOY_HTTP.md)**.
+Full walkthrough — Auth0 resource configuration, Docker networking, reverse
+proxy, TLS and client connection: **[docs/DEPLOY_HTTP.md](./docs/DEPLOY_HTTP.md)**.
 
 ### Upgrading
 

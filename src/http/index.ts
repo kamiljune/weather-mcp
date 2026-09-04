@@ -23,7 +23,7 @@ const SHUTDOWN_GRACE_MS = 10000;
 
 function main(): void {
   const config = loadHttpConfig();
-  const { server, apiKeys, rateLimiter } = createHttpServer(config);
+  const { server, rateLimiter } = createHttpServer(config);
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -44,7 +44,6 @@ function main(): void {
       logger.info('HTTP listener closed');
 
       rateLimiter.stopSweeping();
-      apiKeys.stopWatching();
       await analytics.shutdown();
       noaaService.clearCache();
       openMeteoService.clearCache();
@@ -60,31 +59,17 @@ function main(): void {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  // Force an immediate key reload without waiting for the poll interval:
-  //   docker compose kill -s HUP weather-mcp
-  process.on('SIGHUP', () => {
-    if (!apiKeys.reloadable) {
-      logger.warn('SIGHUP ignored: keys come from WEATHER_API_KEYS, which is read once at startup', {
-        service: 'http'
-      });
-      return;
-    }
-    logger.info('SIGHUP received, reloading API keys', { service: 'http' });
-    apiKeys.reload();
-  });
-
   server.listen(config.port, config.host, () => {
     logger.info('Weather MCP HTTP server listening', {
       version: SERVER_VERSION,
       host: config.host,
       port: config.port,
-      endpoint: `${config.basePath}/<api-key>`,
-      tenants: apiKeys.current.tenantCount,
-      apiKeys: apiKeys.current.size,
-      // Labels are operator-chosen names, never key material.
-      apiKeyLabels: apiKeys.current.labels.join(', '),
-      keySource: apiKeys.filePath ?? 'WEATHER_API_KEYS (fixed until restart)',
-      keyReload: apiKeys.reloadable ? `every ${config.apiKeysReloadSeconds}s + SIGHUP` : 'restart required',
+      endpoint: config.basePath,
+      auth: 'Auth0 OAuth + Garmin user allowlist',
+      audience: config.auth0Audience,
+      authorizationServer: `https://${config.auth0Domain}/`,
+      garminAuthzUrl: config.garminAuthzUrl,
+      tenantAliasesFile: config.tenantAliasesFile ?? 'none',
       rateLimitPerMinute: config.rateLimitPerMinute,
       jsonResponse: config.jsonResponse,
       chatgptCompat: config.chatgptCompat,

@@ -15,6 +15,9 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
+# Reuse the exact lockfile-resolved tree in the runtime stage instead of doing
+# a second network install, which is both slower and less reliable.
+RUN npm prune --omit=dev --no-audit --no-fund
 
 FROM node:22-alpine AS runtime
 
@@ -25,11 +28,10 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 
-# Saved locations live here, one directory per API key. Mount a volume to keep them.
+# Saved locations live here, one directory per authorized tenant. Mount a volume to keep them.
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
 

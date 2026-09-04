@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **2026-09-04 18:33:57 Weather hosted access switched to Auth0 OAuth**
+  - 变更：`POST /mcp` 现在只接受 audience 为 `https://weather.laputa.one/mcp` 的 Auth0 RS256 access token；新增 OAuth protected-resource metadata、Garmin 实时用户授权、`user4 -> lihao` tenant 别名和私有 `mcp-internal` Docker network。URL key、query key、静态 Bearer key 和 key watcher 均已退出运行路径。
+  - 原因：统一 Claude、ChatGPT 等远程 MCP 客户端的 OAuth 登录，并复用 Garmin `/connect` 已建立的用户体系决定 Weather 访问权限。
+  - 影响：客户端地址统一为 `/mcp`；Auth0 只认证身份，Garmin `users.active` 决定授权；Garmin 不可用时 Weather fail closed 返回 `503`；saved-location 和限流继续按最终 tenant id 隔离。
+  - 下一步：完成生产备份、备用端口 OAuth 冒烟测试、OpenResty 切换和 Claude/ChatGPT 真机验证后，撤销旧 Weather keys。
+
 ### Added
 - **Streamable HTTP transport — run the server as a hosted service** (`npm run start:http`, `dist/http/index.js`) - Until now the only way to reach these tools was a locally spawned stdio process. A second entry point now serves the same server over MCP Streamable HTTP so hosted assistants — Claude custom connectors, ChatGPT connectors — can reach it at a URL like `https://weather.example.com/mcp/<api-key>`. **The stdio path is untouched**: `src/index.ts` is now a thin entry point over a new `createWeatherServer()` factory (`src/server/weatherServer.ts`), which holds the unchanged TOOL_DEFINITIONS registry and dispatch, and the full unit suite passes **unedited** as the lock on that.
 

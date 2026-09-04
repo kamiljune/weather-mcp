@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to config/tenant-aliases.json. Keys are Garmin slugs; values are legacy Weather tenant directory names.",
+  "slug_aliases": {
+    "user4": "lihao"
+  }
+}

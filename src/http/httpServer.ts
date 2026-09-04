@@ -7,19 +7,19 @@
  * clients, and nothing survives a request except the shared upstream caches.
  *
  * Routing:
- *   POST   /mcp/<key>   MCP endpoint, key in the URL path
- *   POST   /mcp         MCP endpoint, key in `Authorization: Bearer` or `?key=`
+ *   POST   /mcp         MCP endpoint, Auth0 access token in Authorization header
+ *   GET    /.well-known/oauth-protected-resource/mcp  OAuth resource metadata
  *   GET    /healthz     liveness probe
- *   GET    /            endpoint discovery, no secrets
+ *   GET    /            endpoint discovery
  */
 
 import { createServer, type IncomingMessage, type Server as NodeHttpServer, type ServerResponse } from 'http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { HttpConfig } from '../config/http.js';
-import { bearerToken, type ApiKeyRecord } from './apiKeys.js';
-import { ApiKeySource } from './apiKeySource.js';
+import { AuthFailure, bearerToken, GarminBackedAuthorizer, type WeatherAuthorizer } from './oauth.js';
 import { RateLimiter } from './rateLimit.js';
 import { TenantRegistry } from './tenants.js';
+import { TenantAliases } from './tenantAliases.js';
 import { createWeatherServer, SERVER_NAME, SERVER_VERSION } from '../server/weatherServer.js';
 import { logger } from '../utils/logger.js';
 
@@ -27,6 +27,8 @@ import { logger } from '../utils/logger.js';
 const JSONRPC_PARSE_ERROR = -32700;
 const JSONRPC_INVALID_REQUEST = -32600;
 const JSONRPC_UNAUTHORIZED = -32001;
+const JSONRPC_FORBIDDEN = -32003;
+const JSONRPC_UNAVAILABLE = -32004;
 
 /**
  * Send a JSON-RPC error response with an HTTP status.
@@ -99,56 +101,10 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string | null
   });
 }
 
-/**
- * Extract the presented API key from a request.
- *
- * Order: URL path segment, then `Authorization: Bearer`, then `?key=`. The path
- * form is the one every remote-MCP client UI can express; the header form is
- * preferred where the client supports it, because URLs reach access logs.
- *
- * @returns The raw key, or null when none was presented.
- */
-export function extractApiKey(
-  req: IncomingMessage,
-  url: URL,
-  basePath: string
-): string | null {
-  if (url.pathname.startsWith(`${basePath}/`)) {
-    const segment = url.pathname.slice(basePath.length + 1);
-    // A key is a single path segment; anything with a slash is a different route.
-    if (segment !== '' && !segment.includes('/')) {
-      try {
-        return decodeURIComponent(segment);
-      } catch {
-        return segment;
-      }
-    }
-  }
-
-  const header = bearerToken(req.headers.authorization);
-  if (header) {
-    return header;
-  }
-
-  return url.searchParams.get('key');
-}
-
-/** Whether a path addresses the MCP endpoint. */
-function isMcpPath(pathname: string, basePath: string): boolean {
-  if (pathname === basePath) {
-    return true;
-  }
-  if (!pathname.startsWith(`${basePath}/`)) {
-    return false;
-  }
-  // Exactly one extra segment (the key) belongs to the MCP endpoint.
-  return !pathname.slice(basePath.length + 1).includes('/');
-}
-
 export interface HttpServerDeps {
   config: HttpConfig;
-  /** Live key set — read per request so a file reload takes effect immediately. */
-  apiKeys: ApiKeySource;
+  authorizer: WeatherAuthorizer;
+  aliases: TenantAliases;
   tenants: TenantRegistry;
   rateLimiter: RateLimiter;
 }
@@ -158,7 +114,9 @@ export interface HttpServerDeps {
  * so tests can drive it without binding a port.
  */
 export function createRequestListener(deps: HttpServerDeps) {
-  const { config, apiKeys, tenants, rateLimiter } = deps;
+  const { config, authorizer, aliases, tenants, rateLimiter } = deps;
+  const metadataPath = `/.well-known/oauth-protected-resource${config.basePath}`;
+  const metadataUrl = `${config.publicBaseUrl}${metadataPath}`;
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -178,13 +136,24 @@ export function createRequestListener(deps: HttpServerDeps) {
         server: SERVER_NAME,
         version: SERVER_VERSION,
         transport: 'streamable-http',
-        endpoint: `${config.basePath}/<api-key>`,
+        endpoint: config.basePath,
+        authentication: 'oauth',
         documentation: 'https://github.com/weather-mcp/weather-mcp#remote-http-server'
       });
       return;
     }
 
-    if (!isMcpPath(url.pathname, config.basePath)) {
+    if (url.pathname === metadataPath && (method === 'GET' || method === 'HEAD')) {
+      sendJson(res, 200, {
+        resource: config.auth0Audience,
+        authorization_servers: [`https://${config.auth0Domain}/`],
+        bearer_methods_supported: ['header'],
+        resource_name: 'Weather MCP'
+      });
+      return;
+    }
+
+    if (url.pathname !== config.basePath) {
       sendJson(res, 404, { error: 'not_found' });
       return;
     }
@@ -204,30 +173,50 @@ export function createRequestListener(deps: HttpServerDeps) {
       return;
     }
 
-    const presentedKey = extractApiKey(req, url, config.basePath);
-    const keyRecord: ApiKeyRecord | null = apiKeys.current.verify(presentedKey);
-    if (!keyRecord) {
+    const rawToken = bearerToken(req.headers.authorization);
+    if (!rawToken) {
       logger.warn('Rejected unauthenticated MCP request', {
         service: 'http',
         route: config.basePath,
-        keyPresented: presentedKey !== null,
         securityEvent: true
       });
       sendJsonRpcError(
         res,
         401,
         JSONRPC_UNAUTHORIZED,
-        'Invalid or missing API key.',
-        { 'WWW-Authenticate': `Bearer realm="${SERVER_NAME}"` }
+        'Missing OAuth access token.',
+        { 'WWW-Authenticate': `Bearer resource_metadata="${metadataUrl}"` }
       );
       return;
     }
 
-    const decision = rateLimiter.take(keyRecord.id);
+    let tenantId: string;
+    try {
+      const identity = await authorizer.authorize(rawToken);
+      tenantId = aliases.resolve(identity.slug);
+    } catch (error) {
+      const failure = error instanceof AuthFailure
+        ? error
+        : new AuthFailure('unavailable', 'The user authorization service is unavailable.');
+      const status = failure.kind === 'unauthorized' ? 401 : failure.kind === 'forbidden' ? 403 : 503;
+      const code = failure.kind === 'unauthorized'
+        ? JSONRPC_UNAUTHORIZED
+        : failure.kind === 'forbidden' ? JSONRPC_FORBIDDEN : JSONRPC_UNAVAILABLE;
+      logger.warn('Rejected MCP request', {
+        service: 'http', route: config.basePath, reason: failure.kind, securityEvent: true
+      });
+      const headers: Record<string, string> = status === 401
+        ? { 'WWW-Authenticate': `Bearer error="invalid_token", resource_metadata="${metadataUrl}"` }
+        : {};
+      sendJsonRpcError(res, status, code, failure.message, headers);
+      return;
+    }
+
+    const decision = rateLimiter.take(tenantId);
     if (!decision.allowed) {
       logger.warn('Rate limit exceeded', {
         service: 'http',
-        keyId: keyRecord.id,
+        tenantId,
         securityEvent: true
       });
       sendJsonRpcError(
@@ -259,7 +248,7 @@ export function createRequestListener(deps: HttpServerDeps) {
     }
 
     const server = createWeatherServer({
-      locationStore: tenants.getLocationStore(keyRecord.id),
+      locationStore: tenants.getLocationStore(tenantId),
       chatgptCompat: config.chatgptCompat
     });
 
@@ -286,7 +275,7 @@ export function createRequestListener(deps: HttpServerDeps) {
     } catch (error) {
       logger.error('MCP request failed', error as Error, {
         service: 'http',
-        keyId: keyRecord.id
+        tenantId
       });
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, JSONRPC_INVALID_REQUEST, 'Internal server error.');
@@ -298,24 +287,19 @@ export function createRequestListener(deps: HttpServerDeps) {
 }
 
 /**
- * Assemble the HTTP server and its per-key state from a validated config.
+ * Assemble the HTTP server and its per-tenant state from a validated config.
  */
-export function createHttpServer(config: HttpConfig): {
-  server: NodeHttpServer;
-  apiKeys: ApiKeySource;
-  rateLimiter: RateLimiter;
-} {
-  const apiKeys = new ApiKeySource({
-    ...(config.apiKeysFile === undefined ? {} : { filePath: config.apiKeysFile }),
-    spec: config.apiKeysSpec,
-    pollSeconds: config.apiKeysReloadSeconds
-  });
-  apiKeys.startWatching();
+export function createHttpServer(
+  config: HttpConfig,
+  overrides: { authorizer?: WeatherAuthorizer; aliases?: TenantAliases } = {}
+): { server: NodeHttpServer; rateLimiter: RateLimiter } {
+  const authorizer = overrides.authorizer ?? new GarminBackedAuthorizer(config);
+  const aliases = overrides.aliases ?? new TenantAliases(config.tenantAliasesFile);
   const tenants = new TenantRegistry(config.dataDir);
   const rateLimiter = new RateLimiter(config.rateLimitPerMinute);
   rateLimiter.startSweeping();
 
-  const listener = createRequestListener({ config, apiKeys, tenants, rateLimiter });
+  const listener = createRequestListener({ config, authorizer, aliases, tenants, rateLimiter });
   const server = createServer((req, res) => {
     void listener(req, res).catch(error => {
       logger.error('Unhandled HTTP error', error as Error, { service: 'http' });
@@ -327,5 +311,5 @@ export function createHttpServer(config: HttpConfig): {
     });
   });
 
-  return { server, apiKeys, rateLimiter };
+  return { server, rateLimiter };
 }

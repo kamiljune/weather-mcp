@@ -1,8 +1,8 @@
 # Streamable HTTP deployment of the weather MCP server.
 #
 # Publishes on the loopback interface only — TLS and the public hostname are the
-# reverse proxy's job (1Panel / OpenResty, nginx, Caddy). Copy .env.http.example
-# to .env and fill in WEATHER_API_KEYS before starting.
+# reverse proxy's job (1Panel / OpenResty, nginx, Caddy). Authentication is
+# Auth0 OAuth; Garmin's /connect users are the authorization source.
 
 services:
   weather-mcp:
@@ -18,23 +18,16 @@ services:
     volumes:
       # Saved locations, one directory per tenant id.
       - ./data:/data
-      # API keys. Mounted as a DIRECTORY, not a single file: editing a
-      # bind-mounted file usually replaces its inode, and the container would
-      # keep reading the old one — hot reload would silently stop working.
+      # Legacy tenant aliases only; no key material is read by the HTTP runtime.
       - ./config:/config:ro
+    networks:
+      - mcp-internal
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
 
-    # If the reverse proxy itself runs in a container (1Panel's OpenResty does)
-    # and cannot reach 127.0.0.1 on the host, put both on the same Docker network
-    # and proxy to http://weather-mcp:8080 instead. Uncomment below and the
-    # matching networks block:
-    # networks:
-    #   - 1panel-network
-
-# networks:
-#   1panel-network:
-#     external: true
+networks:
+  mcp-internal:
+    external: true

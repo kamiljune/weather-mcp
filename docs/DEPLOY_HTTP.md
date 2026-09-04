@@ -5,8 +5,8 @@ your own (the examples use `weather.laputa.one`), reachable by Claude custom
 connectors and ChatGPT connectors.
 
 - **Transport:** MCP Streamable HTTP, stateless
-- **Endpoint:** `POST https://weather.laputa.one/mcp/<api-key>`
-- **Auth:** an API key in the URL path, or `Authorization: Bearer <key>`
+- **Endpoint:** `POST https://weather.laputa.one/mcp`
+- **Auth:** Auth0 OAuth access token in `Authorization: Bearer`
 - **Entry point:** `dist/http/index.js` (`npm run start:http`)
 
 The stdio entry point is untouched: `npx @dangahagan/weather-mcp` still works
@@ -14,108 +14,31 @@ exactly as before, and nothing in this guide affects it.
 
 ---
 
-## 1. Set up keys
+## 1. Configure Auth0 and user authorization
 
-### The model: tenants, not keys
+Create a dedicated Auth0 API whose Identifier is exactly:
 
-A **tenant** is a person or an installation. The tenant `id` is what identifies
-a caller everywhere: it names their saved-location directory and appears in
-logs. A tenant owns **one or more keys**, so:
-
-- one person can hold a Claude key *and* a ChatGPT key over the same saved
-  locations — save `home` in one, use it from the other;
-- a key can be rotated by adding the new one, switching clients over, then
-  removing the old one, with **no data loss** — the tenant id never changed;
-- a leaked key is revoked on its own, without disturbing anyone else.
-
-Nothing else is scoped per tenant. Every valid key can call every enabled tool;
-there is no permission model. A key is a door badge, not an account.
-
-### Generate keys
-
-```bash
-openssl rand -base64 32 | tr -d '=+/'
+```text
+https://weather.laputa.one/mcp
 ```
 
-At least 24 characters — the server refuses to start on anything shorter. One
-key per client installation is the useful granularity.
+The Auth0 tenant, login connections and imported Claude/ChatGPT CIMD clients may
+be shared with Garmin, but the Garmin and Weather API identifiers are different.
+Weather validates its own token, then forwards it over a private Docker network
+to Garmin's `/internal/weather/identity`. Garmin validates the Weather audience
+again and returns a slug only when that Auth0 `sub` belongs to an active
+`/connect` user. Missing, unknown and inactive users are never auto-created.
 
-### The key file (recommended)
-
-```bash
-mkdir -p config
-cp keys.example.json config/keys.json
-$EDITOR config/keys.json
-```
-
-`/config/` and `/data/` are gitignored, so deploying from a clone of this
-repository will not commit your keys or anyone's saved locations. Verify with
-`git status` after your first `docker compose up` — it should report nothing.
+Saved locations remain per tenant. The Garmin slug is the default tenant id;
+preserve an old directory name with `config/tenant-aliases.json`:
 
 ```json
-{
-  "tenants": [
-    {
-      "id": "kamil",
-      "label": "Kamil",
-      "keys": ["key-used-by-claude", "key-used-by-chatgpt"]
-    },
-    { "id": "alice", "keys": ["alices-key"] }
-  ]
-}
+{ "slug_aliases": { "user4": "lihao" } }
 ```
 
-`id` is required and becomes a directory name, so it is restricted to `a-z`,
-`0-9`, dash and underscore (1–64 characters) — anything else is refused. `label`
-is optional and cosmetic. The file is re-read every
-`WEATHER_API_KEYS_RELOAD_SECONDS` (default 10), so **adding, rotating or
-revoking a person needs no restart**. To apply a change immediately:
-
-```bash
-docker compose kill -s HUP weather-mcp
-```
-
-Two properties worth relying on:
-
-- **A broken file never locks anyone out.** The running key set is replaced only
-  when a new file parses and validates completely. A syntax error, a truncated
-  write, or a deleted file leaves the previous set serving and logs the failure.
-  Watch for `API key reload failed` in the logs — that means your edit did *not*
-  take effect.
-- **The file must sit in a mounted directory**, which is why the compose file
-  mounts `./config` rather than the file itself. Bind-mounting a single file
-  pins an inode, and most editors replace the inode on save; the container would
-  go on reading the old file and reload would silently stop working.
-
-### Or: keys in the environment
-
-Simpler, at the cost of a restart per change:
-
-```
-WEATHER_API_KEYS=kamil:key-for-claude,kamil:key-for-chatgpt,alice:her-key
-```
-
-Entries sharing a name become **one tenant with several keys**, exactly as in
-the file form. An unlabelled bare key still works, but its tenant id is derived
-from the key itself — so rotating it starts a fresh, empty saved-location
-namespace. The server warns about this at startup; name your tenants.
-
-`WEATHER_API_KEYS_FILE` takes precedence when both are set.
-
-### What a key in the URL costs you
-
-Putting a secret in a URL is a real trade-off, and it is the right one here only
-because several client UIs cannot send a custom header. Understand the exposure:
-
-| Risk | Mitigation |
-|---|---|
-| The key lands in reverse-proxy access logs | Turn off access logging for the MCP location (§3), or use the `Authorization` header where the client supports it |
-| The key appears in browser history / `Referer` | Nothing on this server pastes the URL into a page; do not paste it into one yourself |
-| A leaked key is usable by anyone | Remove that one key from the tenant's `keys` array; the change is live within seconds |
-
-Only the SHA-256 of each key is kept in memory. The raw key never reaches a log
-line, an error message, or a filesystem path — logs identify callers by tenant
-id and label only.
+Both slugs and tenant ids are restricted to lowercase letters, digits, dash and
+underscore. The alias file is read at startup. `/config/` and `/data/` are
+gitignored; never commit real user data or tokens.
 
 ---
 
@@ -125,8 +48,8 @@ id and label only.
 git clone https://github.com/weather-mcp/weather-mcp.git
 cd weather-mcp
 cp .env.http.example .env
-mkdir -p config && cp keys.example.json config/keys.json
-$EDITOR config/keys.json      # define your tenants and their keys
+mkdir -p config && cp tenant-aliases.example.json config/tenant-aliases.json
+docker network inspect mcp-internal >/dev/null 2>&1 || docker network create mcp-internal
 docker compose up -d --build
 ```
 
@@ -136,8 +59,9 @@ Verify locally before wiring up the domain:
 curl -s http://127.0.0.1:8787/healthz
 # {"status":"ok","server":"weather-mcp","version":"1.23.0"}
 
-KEY=your-key-here
-curl -s -X POST http://127.0.0.1:8787/mcp/$KEY \
+TOKEN=your-weather-auth0-access-token
+curl -s -X POST http://127.0.0.1:8787/mcp \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 300
@@ -146,9 +70,9 @@ curl -s -X POST http://127.0.0.1:8787/mcp/$KEY \
 The compose file publishes on `127.0.0.1:8787` only — the public hostname and
 TLS belong to the reverse proxy.
 
-**Saved locations** live in `./data`, one directory per tenant id — `./data/kamil/locations.json`.
-Back that directory up; deleting it loses everyone's aliases. To rename a tenant,
-stop the server, rename both the id in the key file and the directory, and start it again.
+**Saved locations** live in `./data`, one directory per tenant id —
+`./data/kamil/locations.json`. Back that directory up; deleting it loses
+everyone's aliases. Use the alias file to preserve a legacy directory name.
 
 ---
 
@@ -165,8 +89,7 @@ stop the server, rename both the id in the key file and the directory, and start
    block, then save and reload.
 
 ```nginx
-# The API key travels in the request path — keep it out of the access log.
-access_log off;
+# Access tokens stay in the Authorization header; never log that header.
 
 location /mcp {
     proxy_pass http://127.0.0.1:8787;
@@ -193,10 +116,10 @@ location = /healthz {
 }
 ```
 
-> **If the proxy cannot reach `127.0.0.1:8787`**: 1Panel's OpenResty runs in its
-> own container, so loopback on the host may not resolve to the app. In that
-> case uncomment the `1panel-network` blocks in `docker-compose.yml`, recreate
-> the container, and change `proxy_pass` to `http://weather-mcp:8080`.
+> **If the proxy cannot reach `127.0.0.1:8787`**: attach OpenResty and Weather
+> to a separate proxy network and use `http://weather-mcp:8080` as the upstream.
+> Keep `mcp-internal` private to Garmin and Weather; it carries the internal
+> authorization request and must not become a public proxy network.
 
 ### Plain nginx or Caddy
 
@@ -204,10 +127,6 @@ The same headers apply. For Caddy:
 
 ```caddyfile
 weather.laputa.one {
-    log {
-        # The key is in the path; don't record it.
-        output discard
-    }
     reverse_proxy 127.0.0.1:8787 {
         flush_interval -1
     }
@@ -239,15 +158,9 @@ skipping Bot Fight Mode / Super Bot Fight Mode, managed rules, and rate limiting
 Also switch off **Block AI bots** for this hostname if it is enabled — the tools
 are being called *by* an AI assistant on purpose.
 
-**2. Cloudflare logs the API key.** The key is a path segment, so it lands in
-Cloudflare's request analytics, Logpush, and any rule keyed on the URL — a log
-surface outside your server that `access_log off` does not cover. Nothing here is
-broken by that, but weigh it:
-
-- prefer the `Authorization: Bearer` form wherever the client supports it
-  (Claude Code does; the web connector UIs generally do not);
-- never enable a Cache Rule that caches by full URL on this path;
-- if Logpush is on, exclude this hostname or the `ClientRequestURI` field.
+**2. Never cache the OAuth endpoint.** Access tokens are carried in the
+`Authorization` header, not the URL. Do not create a Cache Rule for `/mcp`, and
+do not configure any proxy to log authorization headers.
 
 Two smaller notes: the free plan drops a request whose origin takes longer than
 **100 seconds** (error 524) — comfortably above a normal call, but a cold
@@ -274,26 +187,25 @@ unchanged behind an orange-cloud record.
 **Claude web / desktop** — Settings → Connectors → Add custom connector:
 
 ```
-https://weather.laputa.one/mcp/<your-claude-key>
+https://weather.laputa.one/mcp
 ```
 
-**Claude Code** — the header form keeps the key out of the URL:
+Leave authentication fields empty. The 401 challenge and protected-resource
+metadata start Auth0 OAuth automatically.
+
+**Claude Code:**
 
 ```bash
-claude mcp add --transport http weather https://weather.laputa.one/mcp \
-  --header "Authorization: Bearer <your-claude-key>"
+claude mcp add --transport http weather https://weather.laputa.one/mcp
 ```
 
 ## 5. Connect ChatGPT
 
-Settings → Connectors → Create, with the same URL form:
+Settings → Connectors → Create, choose OAuth and use:
 
 ```
-https://weather.laputa.one/mcp/<your-chatgpt-key>
+https://weather.laputa.one/mcp
 ```
-
-If the UI offers an API-key authentication option, use it with the bare
-`/mcp` URL — it sends `Authorization: Bearer`, which this server accepts.
 
 ChatGPT's **deep research** connector only calls two tools, `search` and
 `fetch`. Set `WEATHER_CHATGPT_COMPAT=true` to expose them: `search` geocodes a
@@ -307,21 +219,23 @@ and are off by default so Claude's tool list is unchanged.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/mcp/<key>` | MCP endpoint, key in the path |
-| `POST` | `/mcp` | MCP endpoint, key in `Authorization: Bearer` or `?key=` |
+| `POST` | `/mcp` | OAuth-protected MCP endpoint |
+| `GET` | `/.well-known/oauth-protected-resource/mcp` | RFC 9728 resource metadata |
 | `GET` | `/healthz` | Liveness probe (no auth) |
-| `GET` | `/` | Endpoint discovery (no auth, no secrets) |
+| `GET` | `/` | Endpoint discovery |
 
 Failure responses are JSON-RPC error objects:
 
 | Status | Meaning |
 |---|---|
 | 400 | Body is not valid JSON |
-| 401 | Missing or unknown API key |
+| 401 | Missing, invalid, expired, wrong-issuer or wrong-audience OAuth token |
+| 403 | Valid token, but the Auth0 sub is not an active Garmin `/connect` user |
 | 404 | Unknown path |
 | 405 | Anything but `POST` on the MCP endpoint (the transport is stateless: no GET stream, no session to DELETE) |
 | 413 | Body over `WEATHER_HTTP_MAX_BODY_BYTES` |
-| 429 | Over `WEATHER_HTTP_RATE_LIMIT` for that key; see `Retry-After` |
+| 429 | Over `WEATHER_HTTP_RATE_LIMIT` for that tenant; see `Retry-After` |
+| 503 | Garmin's private authorization endpoint is unavailable or malformed |
 
 ## Operational notes
 
@@ -331,14 +245,12 @@ Failure responses are JSON-RPC error objects:
 - **Run it as a long-lived process, not a serverless function.** The LRU caches
   and the lightning tool's persistent MQTT connection both assume a process that
   stays up.
-- **Rate limiting is per tenant, per process.** All of a tenant's keys draw on
-  one budget; two replicas mean two budgets.
-- **Key changes need no deploy** when using the key file — edit
-  `config/keys.json` and the running server picks it up. Confirm with the
-  `API keys reloaded` log line, which reports which tenant ids were added and
-  removed.
+- **Rate limiting is per tenant, per process.** A Garmin slug, after any legacy
+  alias mapping, owns one budget; two replicas mean two budgets.
+- **Authorization is deliberately uncached.** Garmin user deactivation takes
+  effect on the next request. If Garmin is unavailable, Weather fails closed.
 - **Upstream courtesy.** NOAA, Open-Meteo, Nominatim and the rest are free
   services with their own limits. `WEATHER_HTTP_RATE_LIMIT` is what stands
   between a runaway client and your IP getting blocked upstream.
-- **Logs never contain key material** — only a 12-character hash prefix
-  (`keyId`) and the operator-chosen label.
+- **Logs never contain access tokens or Auth0 sub values.** Security events use
+  only the final tenant id and a fixed reason class.

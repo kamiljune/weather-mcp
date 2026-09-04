@@ -11,19 +11,21 @@ It tracks upstream and intends to stay mergeable with it.
 
 A **Streamable HTTP transport**, so hosted assistants (Claude custom connectors,
 ChatGPT connectors) can reach the tools at a URL instead of spawning a local
-process. Deployment walkthrough: **[docs/DEPLOY_HTTP.md](./docs/DEPLOY_HTTP.md)**.
+process. Hosted access uses Auth0 OAuth for identity and Garmin's active-user
+registry for authorization. Deployment walkthrough:
+**[docs/DEPLOY_HTTP.md](./docs/DEPLOY_HTTP.md)**.
 
 | Area | What changed |
 |---|---|
 | Entry points | `src/index.ts` reduced to a stdio entry over a new `createWeatherServer()` factory (`src/server/weatherServer.ts`); `src/http/index.ts` added as a second entry point |
-| Transport | `src/http/` — stateless Streamable HTTP, routing, tenant auth, per-tenant rate limiting |
+| Transport | `src/http/` — stateless Streamable HTTP, Auth0 JWT validation, Garmin-backed authorization, tenant aliases, and per-tenant rate limiting |
 | Multi-caller state | Saved locations namespaced per tenant; `LocationStore` gained an optional `disclosePath` flag so HTTP output does not name a server directory |
 | ChatGPT | `src/server/chatgptCompat.ts` — opt-in `search`/`fetch` tools behind `WEATHER_CHATGPT_COMPAT` |
-| Deployment | `Dockerfile`, `docker-compose.yml`, `keys.example.json`, `.env.http.example` |
+| Deployment | `Dockerfile`, `docker-compose.yml`, `tenant-aliases.example.json`, `.env.http.example` |
 
-Everything else — handlers, services, utils, upstream API clients — is unchanged
-from upstream. The unit suite passes **unedited**, which is the standing check
-that the stdio path still behaves exactly as upstream's.
+Weather handlers, services, utils, and upstream API clients remain unchanged
+from upstream. The full unit suite is the standing check that the stdio path
+still behaves exactly as upstream's.
 
 ## Keeping in sync
 
@@ -47,8 +49,8 @@ exactly these, and nowhere else:
 - **`README.md`** — the fork notice at the top and the "Remote HTTP server"
   section under Installation. Both are additive blocks; keep them and take
   upstream's text around them.
-- **`CLAUDE.md`** — the architecture tree, the conventions list, and the
-  configuration block all gained HTTP entries.
+- **`AGENTS.md` and `docs/AI_ASSISTANT_GUIDE.md`** — long-term hosted-auth rules,
+  the architecture tree, conventions, and configuration reference.
 - **`src/index.ts`** — the biggest one. If upstream changes tool registration or
   dispatch, those changes belong in `src/server/weatherServer.ts` now, not in
   `src/index.ts`. Read the upstream diff and apply it there by hand.

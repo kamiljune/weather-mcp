@@ -12,16 +12,13 @@ import { join } from 'path';
 /** Default listen port when WEATHER_HTTP_PORT is unset. */
 const DEFAULT_PORT = 8080;
 
-/** Default per-key request budget, in requests per minute. */
+/** Default per-tenant request budget, in requests per minute. */
 const DEFAULT_RATE_LIMIT_PER_MINUTE = 120;
 
 /** Default cap on a single JSON-RPC request body. */
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 
-/** Default seconds between key-file change checks. */
-const DEFAULT_KEY_RELOAD_SECONDS = 10;
-
-/** Lower bound on an API key, in characters. Shorter keys are refused at startup. */
+/** Retained for the disconnected legacy key parser; HTTP runtime no longer uses API keys. */
 export const MIN_API_KEY_LENGTH = 24;
 
 export interface HttpConfig {
@@ -31,18 +28,19 @@ export interface HttpConfig {
   port: number;
   /** Base path for the MCP endpoint, without a trailing slash (default "/mcp"). */
   basePath: string;
-  /** Raw WEATHER_API_KEYS value; used only when no key file is configured. */
-  apiKeysSpec: string;
-  /**
-   * Path to a JSON key file. When set it is the sole source of truth and is
-   * re-read on change, so tenants can be added or revoked without a restart.
-   */
-  apiKeysFile?: string;
-  /** Seconds between key-file change checks; 0 disables watching. */
-  apiKeysReloadSeconds: number;
-  /** Root directory for per-API-key saved-location stores. */
+  /** Auth0 tenant hostname, without scheme. */
+  auth0Domain: string;
+  /** OAuth protected-resource identifier. Must equal the public MCP URL. */
+  auth0Audience: string;
+  /** Public origin used to publish RFC 9728 protected-resource metadata. */
+  publicBaseUrl: string;
+  /** Garmin's private, same-host entitlement endpoint. */
+  garminAuthzUrl: string;
+  /** Optional JSON file mapping Garmin slugs to legacy Weather tenant ids. */
+  tenantAliasesFile?: string;
+  /** Root directory for per-tenant saved-location stores. */
   dataDir: string;
-  /** Per-key requests per minute; 0 disables rate limiting. */
+  /** Per-tenant requests per minute; 0 disables rate limiting. */
   rateLimitPerMinute: number;
   /** Maximum accepted request body size in bytes. */
   maxBodyBytes: number;
@@ -106,27 +104,52 @@ function parseBasePath(raw: string | undefined): string {
 /**
  * Read and validate the HTTP configuration from the environment.
  *
- * @throws Error when a variable is malformed or WEATHER_API_KEYS is missing.
+ * @throws Error when a variable is malformed or OAuth configuration is missing.
  */
 export function loadHttpConfig(): HttpConfig {
-  const apiKeysSpec = process.env.WEATHER_API_KEYS ?? '';
-  const apiKeysFile = process.env.WEATHER_API_KEYS_FILE?.trim() || undefined;
+  const auth0Domain = process.env.WEATHER_AUTH0_DOMAIN?.trim() || '';
+  const auth0Audience = process.env.WEATHER_AUTH0_AUDIENCE?.trim() || '';
+  const publicBaseUrl = (process.env.WEATHER_PUBLIC_BASE_URL?.trim() || '').replace(/\/+$/, '');
+  const garminAuthzUrl = process.env.WEATHER_GARMIN_AUTHZ_URL?.trim() || '';
 
-  if (apiKeysFile === undefined && apiKeysSpec.trim() === '') {
+  for (const [name, value] of [
+    ['WEATHER_AUTH0_DOMAIN', auth0Domain],
+    ['WEATHER_AUTH0_AUDIENCE', auth0Audience],
+    ['WEATHER_PUBLIC_BASE_URL', publicBaseUrl],
+    ['WEATHER_GARMIN_AUTHZ_URL', garminAuthzUrl]
+  ] as const) {
+    if (value === '') throw new Error(`${name} is required; OAuth has no API-key fallback.`);
+  }
+  if (auth0Domain.includes('://') || auth0Domain.includes('/')) {
+    throw new Error('WEATHER_AUTH0_DOMAIN must be a hostname without scheme or path.');
+  }
+  for (const [name, value] of [
+    ['WEATHER_AUTH0_AUDIENCE', auth0Audience],
+    ['WEATHER_PUBLIC_BASE_URL', publicBaseUrl],
+    ['WEATHER_GARMIN_AUTHZ_URL', garminAuthzUrl]
+  ] as const) {
+    try { new URL(value); } catch { throw new Error(`${name} must be an absolute URL.`); }
+  }
+
+  const basePath = parseBasePath(process.env.WEATHER_HTTP_PATH);
+  const resourceUrl = `${publicBaseUrl}${basePath}`;
+  if (auth0Audience !== resourceUrl) {
     throw new Error(
-      'The HTTP transport needs either WEATHER_API_KEYS_FILE (a JSON key file, ' +
-      'reloaded on change) or WEATHER_API_KEYS (comma-separated keys, optionally ' +
-      'labelled as "name:key").'
+      `WEATHER_AUTH0_AUDIENCE must equal the public MCP resource URL "${resourceUrl}" ` +
+      `(got "${auth0Audience}").`
     );
   }
+  const tenantAliasesFile = process.env.WEATHER_TENANT_ALIASES_FILE?.trim() || undefined;
 
   return {
     host: process.env.WEATHER_HTTP_HOST?.trim() || '0.0.0.0',
     port: parseIntEnv('WEATHER_HTTP_PORT', DEFAULT_PORT, 1, 65535),
-    basePath: parseBasePath(process.env.WEATHER_HTTP_PATH),
-    apiKeysSpec,
-    ...(apiKeysFile === undefined ? {} : { apiKeysFile }),
-    apiKeysReloadSeconds: parseIntEnv('WEATHER_API_KEYS_RELOAD_SECONDS', DEFAULT_KEY_RELOAD_SECONDS, 0, 3600),
+    basePath,
+    auth0Domain,
+    auth0Audience,
+    publicBaseUrl,
+    garminAuthzUrl,
+    ...(tenantAliasesFile === undefined ? {} : { tenantAliasesFile }),
     dataDir: process.env.WEATHER_DATA_DIR?.trim() || join(homedir(), '.weather-mcp', 'tenants'),
     rateLimitPerMinute: parseIntEnv('WEATHER_HTTP_RATE_LIMIT', DEFAULT_RATE_LIMIT_PER_MINUTE, 0, 100000),
     maxBodyBytes: parseIntEnv('WEATHER_HTTP_MAX_BODY_BYTES', DEFAULT_MAX_BODY_BYTES, 1024, 32 * 1024 * 1024),

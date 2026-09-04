@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to config/keys.json (see docs/DEPLOY_HTTP.md). Each tenant is a person or an installation: the id names their saved-location directory and never changes, while keys can be added, rotated and revoked freely. The running server re-reads this file within seconds — no restart.",
+  "_comment": "LEGACY EXAMPLE ONLY. Hosted Weather no longer reads this file or accepts URL, query, or static Bearer keys. It remains only as historical reference and must not be used for deployment.",
 
   "tenants": [
     {
