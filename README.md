@@ -186,7 +186,7 @@ your own, over the MCP Streamable HTTP transport:
 
 ```bash
 cp .env.http.example .env
-docker network create mcp-internal                         # one-time on the host
+docker network create --internal mcp-internal              # one-time on the host
 mkdir -p config && cp tenant-aliases.example.json config/tenant-aliases.json
 docker compose up -d --build
 ```

@@ -49,7 +49,7 @@ git clone https://github.com/weather-mcp/weather-mcp.git
 cd weather-mcp
 cp .env.http.example .env
 mkdir -p config && cp tenant-aliases.example.json config/tenant-aliases.json
-docker network inspect mcp-internal >/dev/null 2>&1 || docker network create mcp-internal
+docker network inspect mcp-internal >/dev/null 2>&1 || docker network create --internal mcp-internal
 docker compose up -d --build
 ```
 
@@ -120,6 +120,10 @@ location = /healthz {
 > to a separate proxy network and use `http://weather-mcp:8080` as the upstream.
 > Keep `mcp-internal` private to Garmin and Weather; it carries the internal
 > authorization request and must not become a public proxy network.
+
+Weather and Garmin also retain their own Compose `default` networks. Those
+networks provide outbound access to Auth0 and weather/Garmin APIs and keep the
+loopback port publications working; `mcp-internal` is not their default route.
 
 ### Plain nginx or Caddy
 

@@ -21,6 +21,7 @@ services:
       # Legacy tenant aliases only; no key material is read by the HTTP runtime.
       - ./config:/config:ro
     networks:
+      - default
       - mcp-internal
     logging:
       driver: json-file
@@ -29,5 +30,6 @@ services:
         max-file: "3"
 
 networks:
+  default:
   mcp-internal:
     external: true

@@ -22,7 +22,8 @@
 
 ## 部署
 
-- Weather 与 Garmin api 只通过外部 Docker 网络 `mcp-internal` 通信。
+- Weather 与 Garmin api 只通过外部 Docker 网络 `mcp-internal` 相互通信；两者同时保留
+  各自的 `default` 网络，用于公网 API 出站访问和宿主机 loopback 端口发布。
 - OpenResty 必须对公网 `/internal/` 返回 404；Weather 公网只暴露 `/mcp`、OAuth
   metadata、根说明和 `/healthz`。
 - 生产切换前备份 `config` 与 `data`，不修改既有 `locations.json`。OAuth 真机通过后
@@ -34,4 +35,3 @@
   `npm test`。
 - 必测缺失/伪造/过期/错误 audience token、未知/停用用户、Garmin 授权服务故障、
   metadata、旧 key 失效、限流隔离、saved-location 隔离与 `user4 -> lihao`。
-

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **2026-09-04 19:08:00 保留默认网络并将内部授权流量单独隔离**
+  - 变更：Weather 同时连接 Compose `default` 与 `mcp-internal`；后者创建为 internal network，仅承载 Garmin 授权调用。
+  - 原因：只连接无网关 internal network 会让宿主机端口发布失效，并阻断 Auth0、JWKS 和天气数据源的出站访问。
+  - 影响：公网仍只经 `127.0.0.1:8787` 和 OpenResty；Garmin 容器 DNS 仍只在 `mcp-internal` 使用。
+  - 下一步：生产重建后同时验证 loopback 端口、容器出网和私网 DNS。
+
 ### Changed
 - **2026-09-04 18:33:57 Weather hosted access switched to Auth0 OAuth**
   - 变更：`POST /mcp` 现在只接受 audience 为 `https://weather.laputa.one/mcp` 的 Auth0 RS256 access token；新增 OAuth protected-resource metadata、Garmin 实时用户授权、`user4 -> lihao` tenant 别名和私有 `mcp-internal` Docker network。URL key、query key、静态 Bearer key 和 key watcher 均已退出运行路径。
