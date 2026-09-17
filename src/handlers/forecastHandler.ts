@@ -812,7 +812,7 @@ async function formatOpenMeteoForecast(
         output += `**Conditions:** ${openMeteoService.getWeatherDescription(daily.weather_code[i])}\n`;
       }
 
-      if (daily.uv_index_max?.[i] !== undefined) {
+      if (daily.uv_index_max?.[i] != null) {
         output += `**UV Index:** ${daily.uv_index_max[i].toFixed(1)}\n`;
       }
 
