@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **2026-09-17 修复 get_forecast 在 days=16 时因 UV Index 为 null 而崩溃**
+  - 变更：`forecastHandler.ts` 的每日 UV Index 输出把 `!== undefined` 判断改成 `!= null`，同时挡住 `undefined` 和 `null` 再调用 `.toFixed(1)`。
+  - 原因：Open-Meteo 对预报窗口最后一天的部分聚合字段（如 `uv_index_max`、`precipitation_probability_max`）本就可能返回 `null`；`days=15` 时最后一天的 `precipitation_probability_max` 已经是 `null`（未崩，因为该处只是原样输出），`days=16` 时最后一天的 `uv_index_max` 也变成 `null`，命中未做 null 保护的 `.toFixed(1)` 直接抛出异常，导致整个 `get_forecast` 调用失败。
+  - 影响：`src/handlers/forecastHandler.ts` 的 daily 分支；同一函数里 `precipitation_sum`（用 `> 0` 比较）、`daylight_duration`（除法）、`wind_*`（`Math.round`）字段对 `null` 不会崩溃，仅显示可能不准确，本次未动。
+  - 下一步：这类"末尾一天聚合字段为 null"是 Open-Meteo 的常态行为，其余字段是否需要同样加固、以及是否要为这条路径补单元测试，留待后续评估。
+
+
 - **2026-09-04 19:08:00 保留默认网络并将内部授权流量单独隔离**
   - 变更：Weather 同时连接 Compose `default` 与 `mcp-internal`；后者创建为 internal network，仅承载 Garmin 授权调用。
   - 原因：只连接无网关 internal network 会让宿主机端口发布失效，并阻断 Auth0、JWKS 和天气数据源的出站访问。
