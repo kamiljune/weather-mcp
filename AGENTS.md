@@ -18,7 +18,8 @@
   原 token 转发到 Garmin 私网 `/internal/weather/identity`。Garmin users 表是唯一
   使用白名单；未知或停用用户拒绝，授权服务不可用时 fail closed，不缓存授权结果。
 - Garmin slug 默认就是 Weather tenant id；例外只允许通过
-  `WEATHER_TENANT_ALIASES_FILE` 显式映射。当前唯一历史映射是 `user4 -> lihao`。
+  `WEATHER_TENANT_ALIASES_FILE` 显式映射。现网没有映射（2026-09-21 garmin 把 `user4` 改名为 `lihao`，
+  正好对上原目录，别名随之清空）；Garmin 那边改 slug 时，有保存地点的人要么挪目录、要么在这里加一条。
 - tenant id 决定 saved-location 目录和限流桶。任何鉴权改动都必须验证不同用户的
   locations 互不可见，且日志、异常和响应不包含 access_token、sub 或服务器路径。
 - `/.well-known/oauth-protected-resource/mcp` 位于域名根，`resource` 必须与 audience
@@ -38,4 +39,4 @@
 - HTTP 鉴权或 tenant 改动至少运行：`npm run build`、HTTP/OAuth 定向测试和完整
   `npm test`。
 - 必测缺失/伪造/过期/错误 audience token、未知/停用用户、Garmin 授权服务故障、
-  metadata、旧 key 失效、限流隔离、saved-location 隔离与 `user4 -> lihao`。
+  metadata、旧 key 失效、限流隔离、saved-location 隔离与别名映射。

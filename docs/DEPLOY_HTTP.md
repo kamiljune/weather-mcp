@@ -33,7 +33,7 @@ Saved locations remain per tenant. The Garmin slug is the default tenant id;
 preserve an old directory name with `config/tenant-aliases.json`:
 
 ```json
-{ "slug_aliases": { "user4": "lihao" } }
+{ "slug_aliases": { "new_slug": "old_dir_name" } }
 ```
 
 Both slugs and tenant ids are restricted to lowercase letters, digits, dash and
