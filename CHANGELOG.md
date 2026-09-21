@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **2026-09-21 清掉 `user4 -> lihao` 别名**
+  - 变更：AGENTS、`docs/DEPLOY_HTTP.md`、`tenant-aliases.example.json` 不再写这条映射（示例换成占位名）；服务器 `config/tenant-aliases.json` 置空（改前备份）。
+  - 原因：garmin 把 `user4` 改名为 `lihao`，slug 直接等于原目录名，别名不再生效。
+  - 影响：只动文档和配置，别名机制本身和它的测试（测试里 user4 只是样例）不变。
+
+### Changed
+- **2026-09-21 HTTP 鉴权改成 IdP 中立：只配 issuer，JWKS 和签名算法从 IdP 读（为换 Logto）**
+  - 变更：`WEATHER_AUTH0_DOMAIN` / `WEATHER_AUTH0_AUDIENCE` 改名为 `WEATHER_OIDC_ISSUER`（完整 issuer URL）/ `WEATHER_OIDC_AUDIENCE`，旧名还在时启动报错。
+    `oauth.ts` 的 `createOidcTokenVerifier` 从 discovery 取 `jwks_uri`（校验 discovery 里的 issuer），算法放行非对称算法、拒 HS\* 和 none；
+    discovery 失败返回 unavailable 且不缓存失败。PRM 的 `authorization_servers` 直接用 issuer。
+  - 原因：原来按 Auth0 写死了 `https://<域名>/`、`/.well-known/jwks.json` 和 RS256；Logto 的 issuer 不带尾斜杠、JWKS 在 `/oidc/jwks`、签 ES384。
+  - 影响：`src/config/http.ts`、`src/http/oauth.ts`、`httpServer.ts`、`index.ts` 及三份测试；新增 RS256/ES384 双算法、HS256 拒收、discovery 说谎/宕机后重试的用例，
+    拿掉 ES384 或 issuer 校验各自会红。全量 `npm test` 有 5 个与本次无关的既有失败（超时默认值、12 月 31 日），改动前后一致。
+    服务器 `.env` 要同步改名。
+
 ### Fixed
 - **2026-09-17 修复 get_forecast 在 days=16 时因 UV Index 为 null 而崩溃**
   - 变更：`forecastHandler.ts` 的每日 UV Index 输出把 `!== undefined` 判断改成 `!= null`，同时挡住 `undefined` 和 `null` 再调用 `.toFixed(1)`。

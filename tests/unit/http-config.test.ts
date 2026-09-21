@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadHttpConfig } from '../../src/config/http.js';
 
 const HTTP_ENV_VARS = [
-  'WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE', 'WEATHER_PUBLIC_BASE_URL',
+  'WEATHER_OIDC_ISSUER', 'WEATHER_OIDC_AUDIENCE', 'WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE', 'WEATHER_PUBLIC_BASE_URL',
   'WEATHER_GARMIN_AUTHZ_URL', 'WEATHER_TENANT_ALIASES_FILE',
   'WEATHER_HTTP_HOST', 'WEATHER_HTTP_PORT', 'WEATHER_HTTP_PATH',
   'WEATHER_DATA_DIR', 'WEATHER_HTTP_RATE_LIMIT', 'WEATHER_HTTP_MAX_BODY_BYTES',
@@ -18,8 +18,8 @@ describe('loadHttpConfig', () => {
     for (const name of HTTP_ENV_VARS) {
       delete process.env[name];
     }
-    process.env.WEATHER_AUTH0_DOMAIN = 'example.auth0.com';
-    process.env.WEATHER_AUTH0_AUDIENCE = 'https://weather.example.com/mcp';
+    process.env.WEATHER_OIDC_ISSUER = 'https://auth.example.com/oidc';
+    process.env.WEATHER_OIDC_AUDIENCE = 'https://weather.example.com/mcp';
     process.env.WEATHER_PUBLIC_BASE_URL = 'https://weather.example.com';
     process.env.WEATHER_GARMIN_AUTHZ_URL = 'http://garmin-api:8412/internal/weather/identity';
   });
@@ -45,14 +45,14 @@ describe('loadHttpConfig', () => {
     // ChatGPT compatibility tools are opt-in so the default tool list is unchanged.
     expect(config.chatgptCompat).toBe(false);
     expect(config.allowedHosts).toEqual([]);
-    expect(config.auth0Domain).toBe('example.auth0.com');
-    expect(config.auth0Audience).toBe('https://weather.example.com/mcp');
+    expect(config.oidcIssuer).toBe('https://auth.example.com/oidc');
+    expect(config.oidcAudience).toBe('https://weather.example.com/mcp');
     expect(config.tenantAliasesFile).toBeUndefined();
   });
 
   it('requires the complete OAuth and Garmin authorization configuration', () => {
     for (const name of [
-      'WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE',
+      'WEATHER_OIDC_ISSUER', 'WEATHER_OIDC_AUDIENCE',
       'WEATHER_PUBLIC_BASE_URL', 'WEATHER_GARMIN_AUTHZ_URL'
     ]) {
       const value = process.env[name];
@@ -64,13 +64,26 @@ describe('loadHttpConfig', () => {
 
   it('normalizes the base path', () => {
     process.env.WEATHER_HTTP_PATH = '/weather/mcp/';
-    process.env.WEATHER_AUTH0_AUDIENCE = 'https://weather.example.com/weather/mcp';
+    process.env.WEATHER_OIDC_AUDIENCE = 'https://weather.example.com/weather/mcp';
     expect(loadHttpConfig().basePath).toBe('/weather/mcp');
   });
 
   it('requires the OAuth audience to equal the public MCP URL exactly', () => {
-    process.env.WEATHER_AUTH0_AUDIENCE = 'https://weather.example.com/mcp/';
+    process.env.WEATHER_OIDC_AUDIENCE = 'https://weather.example.com/mcp/';
     expect(() => loadHttpConfig()).toThrow(/must equal the public MCP resource URL/);
+  });
+
+  it('rejects a bare hostname as issuer', () => {
+    process.env.WEATHER_OIDC_ISSUER = 'auth.example.com';
+    expect(() => loadHttpConfig()).toThrow(/full https issuer URL/);
+  });
+
+  it('refuses the renamed Auth0 variables instead of ignoring them', () => {
+    for (const legacy of ['WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE']) {
+      process.env[legacy] = 'x';
+      expect(() => loadHttpConfig()).toThrow(new RegExp(`${legacy} is no longer read`));
+      delete process.env[legacy];
+    }
   });
 
   it('rejects a base path without a leading slash', () => {

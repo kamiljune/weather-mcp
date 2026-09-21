@@ -96,7 +96,7 @@ src/
 │   └── version.ts
 ├── config/
 │   ├── cache.ts             # Cache TTLs + CACHE_*/API_TIMEOUT_MS/LOG_LEVEL parsing
-│   ├── http.ts              # WEATHER_HTTP_*/WEATHER_AUTH0_* parsing (HTTP transport only)
+│   ├── http.ts              # WEATHER_HTTP_*/WEATHER_OIDC_* parsing (HTTP transport only)
 │   ├── units.ts             # WEATHER_UNITS and per-unit overrides
 │   ├── tools.ts             # ENABLED_TOOLS presets (basic/standard/full) and tool names
 │   ├── defaultLocation.ts   # WEATHER_DEFAULT_LOCATION
@@ -400,8 +400,8 @@ WEATHER_UNITS=imperial         # imperial | metric (default: imperial)
 LOG_LEVEL=1                    # 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: 1)
 
 # Remote HTTP transport (only read by `npm run start:http`; stdio ignores these)
-WEATHER_AUTH0_DOMAIN=...                   # Auth0 tenant hostname, without scheme
-WEATHER_AUTH0_AUDIENCE=https://weather.example.com/mcp
+WEATHER_OIDC_ISSUER=https://auth.example.com/oidc   # full issuer URL; JWKS + alg come from discovery
+WEATHER_OIDC_AUDIENCE=https://weather.example.com/mcp
 WEATHER_PUBLIC_BASE_URL=https://weather.example.com
 WEATHER_GARMIN_AUTHZ_URL=http://garmin-api:8412/internal/weather/identity
 WEATHER_TENANT_ALIASES_FILE=/config/tenant-aliases.json
