@@ -205,6 +205,7 @@ describe('HTTP transport — routing and request hygiene', () => {
     expect(await response.json()).toEqual({
       resource: 'https://weather.example.com/mcp',
       authorization_servers: ['https://auth.example.com/oidc'],
+      scopes_supported: [],
       bearer_methods_supported: ['header'],
       resource_name: 'Weather MCP'
     });

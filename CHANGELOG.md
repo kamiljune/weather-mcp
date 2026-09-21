@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **2026-09-21 受保护资源元数据补上 `scopes_supported: []`，修 Claude 连不上**
+  - 变更：`/.well-known/oauth-protected-resource/mcp` 多返回一个空的 `scopes_supported`，测试同步。
+  - 原因：没有这个字段时 Claude 改用 Logto 公布的全部 scope，其中 `phone` 不允许，Logto 直接回 `invalid_scope`，Claude 只显示「Authorization with Weather failed」。garmin 那边一直带着空数组，Claude 只要 `offline_access`，所以没事。
+  - 影响：`src/http/httpServer.ts`。不改验 token 的逻辑，ChatGPT 这类会自己选 scope 的客户端不受影响。
+  - 下一步：部署后在 Claude 里重新 Connect 验证。
+
 ### Changed
 - **2026-09-21 清掉 `user4 -> lihao` 别名**
   - 变更：AGENTS、`docs/DEPLOY_HTTP.md`、`tenant-aliases.example.json` 不再写这条映射（示例换成占位名）；服务器 `config/tenant-aliases.json` 置空（改前备份）。
