@@ -34,8 +34,8 @@ function baseConfig(overrides: Partial<HttpConfig> = {}): HttpConfig {
     host: '127.0.0.1',
     port: 0,
     basePath: '/mcp',
-    auth0Domain: 'example.auth0.com',
-    auth0Audience: 'https://weather.example.com/mcp',
+    oidcIssuer: 'https://auth.example.com/oidc',
+    oidcAudience: 'https://weather.example.com/mcp',
     publicBaseUrl: 'https://weather.example.com',
     garminAuthzUrl: 'http://garmin-api:8412/internal/weather/identity',
     dataDir,
@@ -204,7 +204,7 @@ describe('HTTP transport — routing and request hygiene', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       resource: 'https://weather.example.com/mcp',
-      authorization_servers: ['https://example.auth0.com/'],
+      authorization_servers: ['https://auth.example.com/oidc'],
       bearer_methods_supported: ['header'],
       resource_name: 'Weather MCP'
     });

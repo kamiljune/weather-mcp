@@ -7,7 +7,7 @@
  * clients, and nothing survives a request except the shared upstream caches.
  *
  * Routing:
- *   POST   /mcp         MCP endpoint, Auth0 access token in Authorization header
+ *   POST   /mcp         MCP endpoint, OIDC access token in Authorization header
  *   GET    /.well-known/oauth-protected-resource/mcp  OAuth resource metadata
  *   GET    /healthz     liveness probe
  *   GET    /            endpoint discovery
@@ -145,8 +145,8 @@ export function createRequestListener(deps: HttpServerDeps) {
 
     if (url.pathname === metadataPath && (method === 'GET' || method === 'HEAD')) {
       sendJson(res, 200, {
-        resource: config.auth0Audience,
-        authorization_servers: [`https://${config.auth0Domain}/`],
+        resource: config.oidcAudience,
+        authorization_servers: [config.oidcIssuer],
         bearer_methods_supported: ['header'],
         resource_name: 'Weather MCP'
       });

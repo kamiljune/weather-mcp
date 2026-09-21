@@ -28,10 +28,14 @@ export interface HttpConfig {
   port: number;
   /** Base path for the MCP endpoint, without a trailing slash (default "/mcp"). */
   basePath: string;
-  /** Auth0 tenant hostname, without scheme. */
-  auth0Domain: string;
+  /**
+   * OIDC issuer URL, exactly as the IdP's discovery document states it
+   * (Logto: https://auth.laputa.one/oidc, no trailing slash; Auth0: https://<tenant>/).
+   * JWKS location and signing algorithm are read from the IdP, never hard-coded.
+   */
+  oidcIssuer: string;
   /** OAuth protected-resource identifier. Must equal the public MCP URL. */
-  auth0Audience: string;
+  oidcAudience: string;
   /** Public origin used to publish RFC 9728 protected-resource metadata. */
   publicBaseUrl: string;
   /** Garmin's private, same-host entitlement endpoint. */
@@ -107,24 +111,34 @@ function parseBasePath(raw: string | undefined): string {
  * @throws Error when a variable is malformed or OAuth configuration is missing.
  */
 export function loadHttpConfig(): HttpConfig {
-  const auth0Domain = process.env.WEATHER_AUTH0_DOMAIN?.trim() || '';
-  const auth0Audience = process.env.WEATHER_AUTH0_AUDIENCE?.trim() || '';
+  // Renamed 2026-09-21 when the IdP moved from Auth0 to Logto. Fail loudly instead of
+  // silently ignoring them, otherwise a half-migrated .env looks like "OAuth not configured".
+  for (const legacy of ['WEATHER_AUTH0_DOMAIN', 'WEATHER_AUTH0_AUDIENCE']) {
+    if (process.env[legacy]?.trim()) {
+      throw new Error(
+        `${legacy} is no longer read; use WEATHER_OIDC_ISSUER (full issuer URL) and WEATHER_OIDC_AUDIENCE.`
+      );
+    }
+  }
+  const oidcIssuer = process.env.WEATHER_OIDC_ISSUER?.trim() || '';
+  const oidcAudience = process.env.WEATHER_OIDC_AUDIENCE?.trim() || '';
   const publicBaseUrl = (process.env.WEATHER_PUBLIC_BASE_URL?.trim() || '').replace(/\/+$/, '');
   const garminAuthzUrl = process.env.WEATHER_GARMIN_AUTHZ_URL?.trim() || '';
 
   for (const [name, value] of [
-    ['WEATHER_AUTH0_DOMAIN', auth0Domain],
-    ['WEATHER_AUTH0_AUDIENCE', auth0Audience],
+    ['WEATHER_OIDC_ISSUER', oidcIssuer],
+    ['WEATHER_OIDC_AUDIENCE', oidcAudience],
     ['WEATHER_PUBLIC_BASE_URL', publicBaseUrl],
     ['WEATHER_GARMIN_AUTHZ_URL', garminAuthzUrl]
   ] as const) {
     if (value === '') throw new Error(`${name} is required; OAuth has no API-key fallback.`);
   }
-  if (auth0Domain.includes('://') || auth0Domain.includes('/')) {
-    throw new Error('WEATHER_AUTH0_DOMAIN must be a hostname without scheme or path.');
+  if (!oidcIssuer.startsWith('https://')) {
+    throw new Error('WEATHER_OIDC_ISSUER must be the full https issuer URL, not a hostname.');
   }
   for (const [name, value] of [
-    ['WEATHER_AUTH0_AUDIENCE', auth0Audience],
+    ['WEATHER_OIDC_ISSUER', oidcIssuer],
+    ['WEATHER_OIDC_AUDIENCE', oidcAudience],
     ['WEATHER_PUBLIC_BASE_URL', publicBaseUrl],
     ['WEATHER_GARMIN_AUTHZ_URL', garminAuthzUrl]
   ] as const) {
@@ -133,10 +147,10 @@ export function loadHttpConfig(): HttpConfig {
 
   const basePath = parseBasePath(process.env.WEATHER_HTTP_PATH);
   const resourceUrl = `${publicBaseUrl}${basePath}`;
-  if (auth0Audience !== resourceUrl) {
+  if (oidcAudience !== resourceUrl) {
     throw new Error(
-      `WEATHER_AUTH0_AUDIENCE must equal the public MCP resource URL "${resourceUrl}" ` +
-      `(got "${auth0Audience}").`
+      `WEATHER_OIDC_AUDIENCE must equal the public MCP resource URL "${resourceUrl}" ` +
+      `(got "${oidcAudience}").`
     );
   }
   const tenantAliasesFile = process.env.WEATHER_TENANT_ALIASES_FILE?.trim() || undefined;
@@ -145,8 +159,8 @@ export function loadHttpConfig(): HttpConfig {
     host: process.env.WEATHER_HTTP_HOST?.trim() || '0.0.0.0',
     port: parseIntEnv('WEATHER_HTTP_PORT', DEFAULT_PORT, 1, 65535),
     basePath,
-    auth0Domain,
-    auth0Audience,
+    oidcIssuer,
+    oidcAudience,
     publicBaseUrl,
     garminAuthzUrl,
     ...(tenantAliasesFile === undefined ? {} : { tenantAliasesFile }),
