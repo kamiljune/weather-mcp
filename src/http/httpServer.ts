@@ -147,11 +147,14 @@ export function createRequestListener(deps: HttpServerDeps) {
       sendJson(res, 200, {
         resource: config.oidcAudience,
         authorization_servers: [config.oidcIssuer],
-        // Must be present, even empty. Without it Claude falls back to the IdP's
+        // Must be present. Without it Claude falls back to the IdP's
         // scopes_supported and requests every one of them; Logto rejects `phone`
-        // for Claude's CIMD client with invalid_scope (2026-09-21). With [] Claude
-        // asks only for offline_access, same as the Garmin server's metadata.
-        scopes_supported: [],
+        // for Claude's CIMD client with invalid_scope (2026-09-21).
+        // offline_access is listed so clients ask for a long-lived refresh token:
+        // with scope "" Logto gave ChatGPT none at all and gave Claude one bound
+        // to the sign-in session, so both had to reconnect (2026-10-06). It is not
+        // a required scope; tokens are still checked only for iss/aud/sig/sub.
+        scopes_supported: ['offline_access'],
         bearer_methods_supported: ['header'],
         resource_name: 'Weather MCP'
       });

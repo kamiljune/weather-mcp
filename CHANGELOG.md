@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **2026-10-06 15:35:00 受保护资源元数据改成 `scopes_supported: ["offline_access"]`，修每天要重连**
+  - 变更：`/.well-known/oauth-protected-resource/mcp` 的 `scopes_supported` 从 `[]` 改成 `["offline_access"]`，测试同步；Logto 的 Dynamic app（CIMD）同时打开了「Add consent prompt for offline access」。
+  - 原因：Logto 审计日志显示 Claude、ChatGPT 换 token 时授予的 scope 都是空的。ChatGPT 拿不到 refresh token，access token 1 小时一过就得重新授权；Claude 拿到的 refresh token 跟 Logto 登录会话绑定，10-06 07:45 刷新报 `refresh token is expired`。Logto 只在带 `prompt=consent` 时才因 `offline_access` 发长期 refresh token，那个开关负责补上 consent。
+  - 影响：`src/http/httpServer.ts`。只改公布的 scope，验 token 仍只看 iss/aud/签名/sub，不要求 token 带任何 scope，现有 token 不受影响。`npm test` 有 5 条与此无关的既有失败（超时默认值、时区），改动前后一致。
+  - 下一步：部署后在 Claude 和 ChatGPT 各重连一次，到 Logto 审计日志确认授权码换 token 那条 `scope` 含 `offline_access`、`tokenTypes` 含 `RefreshToken`；通过后再改 garmin（paola）。
+
 - **2026-09-21 受保护资源元数据补上 `scopes_supported: []`，修 Claude 连不上**
   - 变更：`/.well-known/oauth-protected-resource/mcp` 多返回一个空的 `scopes_supported`，测试同步。
   - 原因：没有这个字段时 Claude 改用 Logto 公布的全部 scope，其中 `phone` 不允许，Logto 直接回 `invalid_scope`，Claude 只显示「Authorization with Weather failed」。garmin 那边一直带着空数组，Claude 只要 `offline_access`，所以没事。
